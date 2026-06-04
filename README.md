@@ -7,11 +7,16 @@
 This repository contains the official implementation of **"Predict Before You Explore: Predictive Planning with Specialized Memory for Embodied Question Answering"** (CVPR 2026).
 
 > Bowen Yuan, Sisi You, Bing-Kun Bao
+
 > Nanjing University of Posts and Telecommunications, Hefei University of Technology
 
 ## Overview
 
 Embodied Question Answering (EQA) requires agents to navigate 3D environments, accumulate visual evidence, and reason over partial observations to answer questions. Current agents struggle with two key challenges: planning remains **reactive** without long-horizon coherence, and **monolithic memories** entangle all observations, hindering retrieval of sparse but crucial evidence.
+
+<p align="center">
+  <img src="framework.png" alt="Pred-EQA framework" width="100%">
+</p>
 
 We reframe EQA through the lens of **predictive processing**, where coherent behavior emerges from a *prediction–correction loop* grounded in stable priors. **Pred-EQA** instantiates this idea with two jointly designed mechanisms:
 
@@ -19,11 +24,6 @@ We reframe EQA through the lens of **predictive processing**, where coherent beh
 - **Functionally Specialized Memory**: A dual-memory system separates a slowly evolving **textual structural memory** (stable spatial/semantic priors) from a compact **visual evidence memory** (only question-relevant observations), enabling consistent planning and efficient retrieval.
 
 Through this prediction-guided exploration, Pred-EQA produces coherent trajectories under partial observability and achieves state-of-the-art results in both accuracy and exploration efficiency.
-
-<p align="center">
-  <img src="framework.png" alt="Pred-EQA framework" width="100%">
-</p>
-
 
 
 ## Results
