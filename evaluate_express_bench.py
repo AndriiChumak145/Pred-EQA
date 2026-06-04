@@ -1,6 +1,6 @@
 """
 评估EXPRESS-Bench结果
-读取run_aeqa_evaluation_vlm_only_express.py生成的结果，使用GPT-4o进行评估并生成EAC分数
+读取run_express_bench_evaluation_vlm_only.py生成的结果，使用GPT-4o进行评估并生成EAC分数
 """
 
 import json

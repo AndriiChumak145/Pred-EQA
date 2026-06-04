@@ -130,7 +130,7 @@ Use the Express-Bench runner and its dedicated evaluation/scoring scripts:
 
 ```bash
 # 1) Run exploration + answering on Express-Bench
-python run_aeqa_evaluation_vlm_only_express.py -cf cfg/eval_pred_eqa.yaml --qwen Qwen3-VL-8B-Instruct
+python run_express_bench_evaluation_vlm_only.py -cf cfg/eval_pred_eqa.yaml --qwen Qwen3-VL-8B-Instruct
 
 # 2) Evaluate answers (image alignment + accuracy) with the Express-Bench protocol
 python evaluate_express_bench.py \
@@ -150,7 +150,7 @@ Remember to point `questions_list_path` to `data/express-bench.json` in the conf
 
 ```
 run_aeqa_evaluation_vlm_only.py          # A-EQA exploration + answering pipeline
-run_aeqa_evaluation_vlm_only_express.py  # Express-Bench pipeline
+run_express_bench_evaluation_vlm_only.py # Express-Bench pipeline
 evaluate-predictions.py / get-scores.py  # A-EQA LLM-Match / LLM-SPL scoring
 evaluate_express_bench.py / get_scores_express_bench.py  # Express-Bench scoring
 src/
