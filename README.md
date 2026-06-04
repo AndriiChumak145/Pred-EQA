@@ -20,6 +20,10 @@ We reframe EQA through the lens of **predictive processing**, where coherent beh
 
 Through this prediction-guided exploration, Pred-EQA produces coherent trajectories under partial observability and achieves state-of-the-art results in both accuracy and exploration efficiency.
 
+<p align="center">
+  <img src="framework.png" alt="Pred-EQA framework" width="100%">
+</p>
+
 
 
 ## Results
