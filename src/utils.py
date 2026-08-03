@@ -39,7 +39,10 @@ def get_pts_angle_aeqa(init_pts, init_quat):
 
     init_quat = quaternion.quaternion(*init_quat)
     angle, axis = quat_to_angle_axis(init_quat)
-    angle = angle * axis[1] / np.abs(axis[1])
+    if axis[1] != 0:
+        angle = angle * axis[1] / np.abs(axis[1])
+    else:
+        angle = 0.0
 
     return pts, angle
 
@@ -49,7 +52,10 @@ def get_pts_angle_goatbench(init_pos, init_rot):
 
     init_quat = quat_from_coeffs(init_rot)
     angle, axis = quat_to_angle_axis(init_quat)
-    angle = angle * axis[1] / np.abs(axis[1])
+    if axis[1] != 0:
+        angle = angle * axis[1] / np.abs(axis[1])
+    else:
+        angle = 0.0
 
     return pts, angle
 

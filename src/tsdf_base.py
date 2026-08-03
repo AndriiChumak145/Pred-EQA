@@ -124,29 +124,26 @@ class TSDFPlannerBase:
         )
 
     @staticmethod
-    @njit(parallel=True)
     def vox2world(vol_origin, vox_coords, vox_size):
         """Convert voxel grid coordinates to world coordinates."""
         vol_origin = vol_origin.astype(np.float32)
         vox_coords = vox_coords.astype(np.float32)
-        cam_pts = np.empty_like(vox_coords, dtype=np.float32)
-        for i in prange(vox_coords.shape[0]):
-            for j in range(3):
-                cam_pts[i, j] = vol_origin[j] + (vox_size * vox_coords[i, j])
-        return cam_pts
+        return vol_origin + (vox_size * vox_coords)
 
     @staticmethod
-    @njit(parallel=True)
     def cam2pix(cam_pts, intr):
         """Convert camera coordinates to pixel coordinates."""
         intr = intr.astype(np.float32)
         fx, fy = intr[0, 0], intr[1, 1]
         cx, cy = intr[0, 2], intr[1, 2]
-        pix = np.empty((cam_pts.shape[0], 2), dtype=np.int64)
-        for i in prange(cam_pts.shape[0]):
-            pix[i, 0] = int(np.round((cam_pts[i, 0] * fx / cam_pts[i, 2]) + cx))
-            pix[i, 1] = int(np.round((cam_pts[i, 1] * fy / cam_pts[i, 2]) + cy))
-        return pix
+        
+        # Avoid division by zero
+        z = cam_pts[:, 2]
+        z_safe = np.where(z == 0, 1e-8, z)
+        
+        pix_x = np.round((cam_pts[:, 0] * fx / z_safe) + cx).astype(np.int64)
+        pix_y = np.round((cam_pts[:, 1] * fy / z_safe) + cy).astype(np.int64)
+        return np.stack((pix_x, pix_y), axis=-1)
 
     def pix2cam(self, pix, intr):
         """Convert pixel coordinates to camera coordinates."""
@@ -167,15 +164,11 @@ class TSDFPlannerBase:
         return coords
 
     @staticmethod
-    @njit(parallel=True)
     def integrate_tsdf(tsdf_vol, dist, w_old, obs_weight):
         """Integrate the TSDF volume."""
-        tsdf_vol_int = np.empty_like(tsdf_vol, dtype=np.float32)
-        w_new = np.empty_like(w_old, dtype=np.float32)
-        for i in prange(len(tsdf_vol)):
-            w_new[i] = w_old[i] + obs_weight
-            tsdf_vol_int[i] = (w_old[i] * tsdf_vol[i] + obs_weight * dist[i]) / w_new[i]
-        return tsdf_vol_int, w_new
+        w_new = w_old + obs_weight
+        tsdf_vol_int = (w_old * tsdf_vol + obs_weight * dist) / w_new
+        return tsdf_vol_int.astype(np.float32), w_new.astype(np.float32)
 
     def integrate(
         self,

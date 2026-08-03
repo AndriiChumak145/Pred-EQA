@@ -27,11 +27,47 @@ def safe_strip(string):
         return ""
     return string.strip()
 
+VLM_CONFIG = {
+    "provider": "local_qwen",
+    "model": "Qwen3-VL-8B-Instruct",
+    "base_url": "http://127.0.0.1:8000/v1",
+    "api_key": "EMPTY",
+    "rate_limit_delay": 0.0,
+}
+
 client = OpenAI(
-    api_key="EMPTY",
-    base_url="http://0.0.0.0:22002/v1",
+    api_key=VLM_CONFIG["api_key"],
+    base_url=VLM_CONFIG["base_url"],
     timeout=3600
 )
+
+def set_vlm_config(provider="local_qwen", model=None, base_url=None, api_key=None, rate_limit_delay=None):
+    """
+    Configures VLM provider (local_qwen or gemini) dynamically.
+    Fully backwards compatible: defaults to local Qwen setup.
+    """
+    global VLM_CONFIG, client
+    if provider == "gemini":
+        token_file = "/home/dani/concept-scenesplat/tokens/gemini_api_key"
+        file_key = open(token_file).read().strip() if os.path.exists(token_file) else None
+        
+        VLM_CONFIG["provider"] = "gemini"
+        VLM_CONFIG["model"] = model or os.getenv("GEMINI_MODEL", "gemini-robotics-er-2-preview")
+        VLM_CONFIG["base_url"] = base_url or os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+        VLM_CONFIG["api_key"] = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or file_key or "EMPTY"
+        VLM_CONFIG["rate_limit_delay"] = float(rate_limit_delay) if rate_limit_delay is not None else 4.0
+    else:
+        VLM_CONFIG["provider"] = "local_qwen"
+        VLM_CONFIG["model"] = model or "Qwen3-VL-8B-Instruct"
+        VLM_CONFIG["base_url"] = base_url or "http://127.0.0.1:8000/v1"
+        VLM_CONFIG["api_key"] = api_key or "EMPTY"
+        VLM_CONFIG["rate_limit_delay"] = 0.0
+
+    client = OpenAI(
+        api_key=VLM_CONFIG["api_key"],
+        base_url=VLM_CONFIG["base_url"],
+        timeout=3600
+    )
 
 
 # encode tensor images to base64 format
@@ -60,7 +96,7 @@ def format_content(contents):
     return formated_content
 
 
-# send information to openai
+# send information to openai / gemini
 def call_openai_api(sys_prompt, contents) -> Optional[str]:
     max_tries = 5
     retry_count = 0
@@ -69,25 +105,32 @@ def call_openai_api(sys_prompt, contents) -> Optional[str]:
         {"role": "system", "content": sys_prompt},
         {"role": "user", "content": formated_content},
     ]
+
+    delay = VLM_CONFIG.get("rate_limit_delay", 0.0)
+    if delay > 0:
+        time.sleep(delay)
+
     while retry_count < max_tries:
         try:
-            completion = client.chat.completions.create(
-                model="Qwen3-VL-8B-Instruct", 
-                messages=message_text,
-                max_tokens=2048, 
-                temperature=0.7,  
-                top_p=0.8,
-                presence_penalty=1.5,
-                # seed=3407,
-                extra_body={
-                    "repetition_penalty": 1.0,  # 1.0  1.1
+            kwargs = {
+                "model": VLM_CONFIG.get("model", "Qwen3-VL-8B-Instruct"),
+                "messages": message_text,
+                "max_tokens": 2048,
+                "temperature": 0.7,
+                "top_p": 0.8,
+            }
+            if VLM_CONFIG.get("provider") == "local_qwen":
+                kwargs["presence_penalty"] = 1.5
+                kwargs["extra_body"] = {
+                    "repetition_penalty": 1.0,
                     "top_k": 20,
-                },
-            )
+                }
+            completion = client.chat.completions.create(**kwargs)
             return completion.choices[0].message.content
         except openai.RateLimitError as e:
-            print("Rate limit error, waiting for 3s")
-            time.sleep(3)
+            wait_time = 5 * (2 ** retry_count)
+            print(f"Rate limit error, waiting for {wait_time}s")
+            time.sleep(wait_time)
             retry_count += 1
             continue
         except Exception as e:
@@ -106,25 +149,32 @@ def call_openai_api_text(sys_prompt, contents) -> Optional[str]:
         {"role": "system", "content": sys_prompt},
         {"role": "user", "content": formated_content},
     ]
+
+    delay = VLM_CONFIG.get("rate_limit_delay", 0.0)
+    if delay > 0:
+        time.sleep(delay)
+
     while retry_count < max_tries:
         try:
-            completion = client.chat.completions.create(
-                model="Qwen3-VL-8B-Instruct", 
-                messages=message_text,
-                max_tokens=1024,
-                temperature=1.0,  
-                top_p=1.0,
-                presence_penalty=2.0,
-                # seed=3407,
-                extra_body={
-                    "repetition_penalty": 1.0, 
+            kwargs = {
+                "model": VLM_CONFIG.get("model", "Qwen3-VL-8B-Instruct"),
+                "messages": message_text,
+                "max_tokens": 1024,
+                "temperature": 1.0,
+                "top_p": 1.0,
+            }
+            if VLM_CONFIG.get("provider") == "local_qwen":
+                kwargs["presence_penalty"] = 2.0
+                kwargs["extra_body"] = {
+                    "repetition_penalty": 1.0,
                     "top_k": 40,
-                },
-            )
+                }
+            completion = client.chat.completions.create(**kwargs)
             return completion.choices[0].message.content
         except openai.RateLimitError as e:
-            print("Rate limit error, waiting for 3s")
-            time.sleep(3)
+            wait_time = 5 * (2 ** retry_count)
+            print(f"Rate limit error, waiting for {wait_time}s")
+            time.sleep(wait_time)
             retry_count += 1
             continue
         except Exception as e:

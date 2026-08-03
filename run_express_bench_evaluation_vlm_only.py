@@ -32,6 +32,7 @@ from src.query_vlm import query_vlm_for_response  # Use the new pure VLM query f
 from src.logger import Logger
 from src.const import *
 from src.habitat import pos_normal_to_habitat, pos_habitat_to_normal
+from src.pred_eqa import set_vlm_config, VLM_CONFIG
 
 import base64
 import torch
@@ -424,9 +425,29 @@ if __name__ == "__main__":
     parser.add_argument("--start_ratio", help="start ratio", default=0.0, type=float)
     parser.add_argument("--end_ratio", help="end ratio", default=1.0, type=float)
     parser.add_argument("--qwen", help="qwen version", default="Qwen2.5-VL-3B-Instruct", type=str)
+    parser.add_argument("--vlm_provider", help="vlm provider (local_qwen or gemini)", default=None, type=str)
+    parser.add_argument("--vlm_model", help="vlm model name", default=None, type=str)
+    parser.add_argument("--vlm_base_url", help="vlm base url", default=None, type=str)
+    parser.add_argument("--vlm_api_key", help="vlm api key", default=None, type=str)
+    parser.add_argument("--rate_limit_delay", help="rate limit delay in seconds", default=None, type=float)
     args = parser.parse_args()
     cfg = OmegaConf.load(args.cfg_file)
     OmegaConf.resolve(cfg)
+
+    # Configure VLM provider (defaults to local_qwen unless specified in CLI or cfg)
+    vlm_provider = args.vlm_provider or cfg.get("vlm", {}).get("provider", "local_qwen")
+    vlm_model = args.vlm_model or cfg.get("vlm", {}).get("model", "Qwen3-VL-8B-Instruct")
+    vlm_base_url = args.vlm_base_url or cfg.get("vlm", {}).get("base_url", None)
+    vlm_api_key = args.vlm_api_key or cfg.get("vlm", {}).get("api_key", None)
+    rate_limit_delay = args.rate_limit_delay if args.rate_limit_delay is not None else cfg.get("vlm", {}).get("rate_limit_delay_sec", None)
+
+    set_vlm_config(
+        provider=vlm_provider,
+        model=vlm_model,
+        base_url=vlm_base_url,
+        api_key=vlm_api_key,
+        rate_limit_delay=rate_limit_delay
+    )
 
     # Set up logging
     cfg.output_dir = os.path.join(cfg.output_parent_dir, cfg.exp_name)
