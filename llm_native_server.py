@@ -1,6 +1,7 @@
 import argparse
+import logging
 import os
-import sys
+import threading
 import time
 from io import BytesIO
 from typing import Any, Dict, List, Optional
@@ -8,10 +9,13 @@ from typing import Any, Dict, List, Optional
 import requests
 import torch
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 from PIL import Image
 from pydantic import BaseModel
+
+import transformers
+from transformers import AutoProcessor, AutoTokenizer, BitsAndBytesConfig
 
 # Try importing Qwen VL utilities if available
 try:
@@ -20,8 +24,21 @@ try:
 except ImportError:
     HAS_QWEN_VL_UTILS = False
 
-import transformers
-from transformers import AutoProcessor, AutoTokenizer, BitsAndBytesConfig
+# Try importing Qwen3-VL conditional generation class
+try:
+    from transformers import Qwen3VLForConditionalGeneration
+    HAS_QWEN3_VL = True
+except ImportError:
+    HAS_QWEN3_VL = False
+
+# Setup timestamped logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("llm_native_server")
+
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Universal LLM/VLM Native FastAPI Server")
@@ -48,6 +65,7 @@ parser.add_argument(
     default="auto",
     help="Torch dtype (e.g. auto, bfloat16, float16, float32)",
 )
+
 
 def resolve_cached_model_id(model_id: str) -> str:
     if os.path.exists(model_id):
@@ -81,10 +99,15 @@ def resolve_cached_model_id(model_id: str) -> str:
                 if len(real_org_repo) == 2:
                     resolved = f"{real_org_repo[0]}/{real_org_repo[1]}"
                     if resolved != model_id:
-                        print(f"ℹ Auto-resolved '{model_id}' -> '{resolved}' from local cache ({best_size / (1024**3):.2f} GB cached)")
+                        logger.info(
+                            "Auto-resolved '%s' -> '%s' from local cache (%.2f GB cached)",
+                            model_id,
+                            resolved,
+                            best_size / (1024**3),
+                        )
                     return resolved
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Cache resolution encountered an issue: %s", e)
     return model_id
 
 
@@ -95,6 +118,80 @@ HOST = args.host
 PORT = args.port
 
 app = FastAPI(title=f"LLM Native Server ({MODEL_ID})")
+
+
+class TokenTracker:
+    """Thread-safe cumulative token tracker supporting global and per-session metrics."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.start_time = time.time()
+        self.global_stats = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "requests": 0,
+        }
+        self.sessions: Dict[str, Dict[str, Any]] = {}
+
+    def reset(self, session_id: Optional[str] = None):
+        with self._lock:
+            if session_id:
+                if session_id in self.sessions:
+                    del self.sessions[session_id]
+            else:
+                self.global_stats = {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "requests": 0,
+                }
+                self.sessions.clear()
+                self.start_time = time.time()
+
+    def record_usage(self, session_id: str, prompt_tokens: int, completion_tokens: int) -> Dict[str, int]:
+        total_tokens = prompt_tokens + completion_tokens
+        now = time.time()
+        with self._lock:
+            self.global_stats["prompt_tokens"] += prompt_tokens
+            self.global_stats["completion_tokens"] += completion_tokens
+            self.global_stats["total_tokens"] += total_tokens
+            self.global_stats["requests"] += 1
+
+            if session_id not in self.sessions:
+                self.sessions[session_id] = {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "requests": 0,
+                    "start_time": now,
+                    "last_active": now,
+                }
+            s = self.sessions[session_id]
+            s["prompt_tokens"] += prompt_tokens
+            s["completion_tokens"] += completion_tokens
+            s["total_tokens"] += total_tokens
+            s["requests"] += 1
+            s["last_active"] = now
+
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
+
+    def get_summary(self) -> Dict[str, Any]:
+        with self._lock:
+            uptime_sec = time.time() - self.start_time
+            return {
+                "uptime_seconds": round(uptime_sec, 2),
+                "global": dict(self.global_stats),
+                "active_sessions_count": len(self.sessions),
+                "sessions": {k: dict(v) for k, v in self.sessions.items()},
+            }
+
+
+token_tracker = TokenTracker()
 
 
 def load_image(url_or_path: str) -> Image.Image:
@@ -109,17 +206,17 @@ def load_image(url_or_path: str) -> Image.Image:
 
 
 def load_model_and_processor(model_id: str, quantization: str = "8bit", dtype: str = "auto"):
-    print(f"Loading model '{model_id}' (quantization={quantization}, dtype={dtype})...")
+    logger.info("Loading model '%s' (quantization=%s, dtype=%s)...", model_id, quantization, dtype)
 
     # 1. Load Processor / Tokenizer
     processor = None
     try:
         processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-        print("Loaded AutoProcessor.")
+        logger.info("Loaded AutoProcessor.")
     except Exception as e:
-        print(f"AutoProcessor not found or failed ({e}), falling back to AutoTokenizer...")
+        logger.info("AutoProcessor not found or failed (%s), falling back to AutoTokenizer...", e)
         processor = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-        print("Loaded AutoTokenizer.")
+        logger.info("Loaded AutoTokenizer.")
 
     # 2. Setup Quantization Config
     quantization_config = None
@@ -137,10 +234,9 @@ def load_model_and_processor(model_id: str, quantization: str = "8bit", dtype: s
     model = None
     model_lower = model_id.lower()
 
-    # Try explicit Qwen3VL / Qwen2VL classes if applicable
-    if "qwen3" in model_lower and "vl" in model_lower:
+    # Load Qwen3-VL directly if available
+    if "qwen3" in model_lower and "vl" in model_lower and HAS_QWEN3_VL:
         try:
-            from transformers import Qwen3VLForConditionalGeneration
             model = Qwen3VLForConditionalGeneration.from_pretrained(
                 model_id,
                 torch_dtype=torch_dtype,
@@ -148,23 +244,9 @@ def load_model_and_processor(model_id: str, quantization: str = "8bit", dtype: s
                 quantization_config=quantization_config,
                 trust_remote_code=True,
             )
-            print("Successfully loaded model with Qwen3VLForConditionalGeneration.")
+            logger.info("Successfully loaded model with Qwen3VLForConditionalGeneration.")
         except Exception as e:
-            print(f"Qwen3VLForConditionalGeneration load attempt failed: {e}")
-
-    if model is None and "qwen2" in model_lower and "vl" in model_lower:
-        try:
-            from transformers import Qwen2VLForConditionalGeneration
-            model = Qwen2VLForConditionalGeneration.from_pretrained(
-                model_id,
-                torch_dtype=torch_dtype,
-                device_map="auto",
-                quantization_config=quantization_config,
-                trust_remote_code=True,
-            )
-            print("Successfully loaded model with Qwen2VLForConditionalGeneration.")
-        except Exception as e:
-            print(f"Qwen2VLForConditionalGeneration load attempt failed: {e}")
+            logger.warning("Qwen3VLForConditionalGeneration load attempt failed: %s", e)
 
     # Auto class fallbacks: AutoModelForMultimodalLM -> AutoModelForImageTextToText -> AutoModelForCausalLM -> AutoModel
     auto_classes = [
@@ -179,7 +261,7 @@ def load_model_and_processor(model_id: str, quantization: str = "8bit", dtype: s
             if hasattr(transformers, cls_name):
                 cls = getattr(transformers, cls_name)
                 try:
-                    print(f"Attempting to load model with {cls_name}...")
+                    logger.info("Attempting to load model with %s...", cls_name)
                     model = cls.from_pretrained(
                         model_id,
                         torch_dtype=torch_dtype,
@@ -187,10 +269,10 @@ def load_model_and_processor(model_id: str, quantization: str = "8bit", dtype: s
                         quantization_config=quantization_config,
                         trust_remote_code=True,
                     )
-                    print(f"Successfully loaded model with {cls_name}!")
+                    logger.info("Successfully loaded model with %s!", cls_name)
                     break
                 except Exception as e:
-                    print(f"{cls_name} attempt failed: {e}")
+                    logger.warning("%s attempt failed: %s", cls_name, e)
 
     if model is None:
         raise RuntimeError(f"Failed to load model '{model_id}' with available HuggingFace model architectures.")
@@ -199,7 +281,7 @@ def load_model_and_processor(model_id: str, quantization: str = "8bit", dtype: s
 
 
 model, processor = load_model_and_processor(MODEL_ID, quantization=args.quantization, dtype=args.dtype)
-print(f"Model '{MODEL_ID}' loaded successfully and ready to serve requests!")
+logger.info("Model '%s' loaded successfully and ready to serve requests!", MODEL_ID)
 
 
 class ChatCompletionRequest(BaseModel):
@@ -207,6 +289,11 @@ class ChatCompletionRequest(BaseModel):
     messages: List[Dict[str, Any]]
     max_tokens: Optional[int] = 2048
     temperature: Optional[float] = 1.0
+    session_id: Optional[str] = None
+
+
+class ResetUsageRequest(BaseModel):
+    session_id: Optional[str] = None
 
 
 def format_fallback_chat(messages: List[Dict[str, Any]]) -> str:
@@ -225,8 +312,29 @@ async def get_health():
     return {"status": "ok", "data": [{"id": MODEL_ID}]}
 
 
+@app.get("/v1/usage")
+@app.get("/usage")
+async def get_usage():
+    return token_tracker.get_summary()
+
+
+@app.post("/v1/usage/reset")
+@app.post("/usage/reset")
+async def reset_usage(request: Optional[ResetUsageRequest] = None):
+    session_to_reset = request.session_id if request else None
+    token_tracker.reset(session_id=session_to_reset)
+    target = f"session '{session_to_reset}'" if session_to_reset else "all sessions and global stats"
+    logger.info("Usage counters reset for %s.", target)
+    return {"status": "ok", "message": f"Reset token counters for {target}"}
+
+
 @app.post("/v1/chat/completions")
-async def chat_completions(request: ChatCompletionRequest):
+async def chat_completions(
+    request: ChatCompletionRequest,
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+):
+    # Determine session id from request parameter or header (defaults to "default")
+    session_id = request.session_id or x_session_id or "default"
     messages = request.messages
 
     # Determine if prompt includes vision/image inputs
@@ -287,7 +395,7 @@ async def chat_completions(request: ChatCompletionRequest):
                             raw_images.append(pil_img)
                             msg_content.append({"type": "image", "image": pil_img})
                         except Exception as e:
-                            print(f"Warning: failed to load image from {url}: {e}")
+                            logger.warning("Failed to load image from %s: %s", url, e)
                 formatted_messages.append({"role": role, "content": msg_content})
             else:
                 formatted_messages.append({"role": role, "content": content})
@@ -367,6 +475,24 @@ async def chat_completions(request: ChatCompletionRequest):
 
     output_text = output_text.strip()
 
+    # Exact token calculation
+    prompt_tokens = int(input_len)
+    completion_tokens = int(generated_ids_trimmed[0].shape[0]) if len(generated_ids_trimmed) > 0 else 0
+    usage_data = token_tracker.record_usage(
+        session_id=session_id,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+
+    logger.info(
+        "Session: %s | Prompt tokens: %d | Completion tokens: %d | Total tokens: %d | Server Cumulative: %d",
+        session_id,
+        usage_data["prompt_tokens"],
+        usage_data["completion_tokens"],
+        usage_data["total_tokens"],
+        token_tracker.global_stats["total_tokens"],
+    )
+
     response = {
         "id": "chatcmpl-llm-native",
         "object": "chat.completion",
@@ -382,7 +508,7 @@ async def chat_completions(request: ChatCompletionRequest):
                 "finish_reason": "stop",
             }
         ],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "usage": usage_data,
     }
     return JSONResponse(content=response)
 

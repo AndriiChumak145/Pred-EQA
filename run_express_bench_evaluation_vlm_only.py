@@ -430,6 +430,7 @@ if __name__ == "__main__":
     parser.add_argument("--vlm_base_url", help="vlm base url", default=None, type=str)
     parser.add_argument("--vlm_api_key", help="vlm api key", default=None, type=str)
     parser.add_argument("--rate_limit_delay", help="rate limit delay in seconds", default=None, type=float)
+    parser.add_argument("--log_mode", help="log file mode ('a' for append, 'w' for overwrite)", default="a", type=str)
     args = parser.parse_args()
     cfg = OmegaConf.load(args.cfg_file)
     OmegaConf.resolve(cfg)
@@ -479,7 +480,7 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(message)s",
         handlers=[
-            logging.FileHandler(logging_path, mode="w"),
+            logging.FileHandler(logging_path, mode=args.log_mode),
             logging.StreamHandler(),
         ],
     )
