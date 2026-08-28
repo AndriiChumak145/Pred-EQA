@@ -148,7 +148,94 @@ python get_scores_express_bench.py \
 
 Remember to point `questions_list_path` to `data/express-bench.json` in the config first.
 
+## Output Structure & Artifacts
 
+All evaluation runs write structured visual, geometric, and textual artifacts under `results/Pred-EQA/`. Each evaluated question generates a dedicated per-episode directory `results/Pred-EQA/{question_id}/` (e.g. `results/Pred-EQA/1/`), alongside dataset-level aggregate summaries.
+
+```
+results/Pred-EQA/
+├── {question_id}/                       # Per-episode results (e.g. results/Pred-EQA/1/)
+│   ├── snapshot/                        # RGB observations along trajectory
+│   │   ├── 0-view_0.png ... 0-view_6.png # Initial 360° panoramic scan views (Step 0)
+│   │   └── {step}-view_{idx}.png        # Step observations (e.g. 1-view_0.png, 1-view_1.png)
+│   ├── frontier/                        # Rendered camera preview crops for candidate frontiers
+│   │   ├── 0_0.png                      # Candidate 0 discovered at step 0
+│   │   ├── 3_0.png, 3_1.png             # Candidates 0 and 1 discovered/updated at step 3
+│   │   └── {step}_{frontier_idx}.png    # Candidate {frontier_idx} rendered at step {step}
+│   ├── frontier_video/                  # Step decision grid composite images
+│   │   ├── 0.png, 1.png, 2.png ...      # Multi-panel grid of candidate frontiers with "Chosen" label
+│   ├── visualization/                   # 2D top-down TSDF occupancy & frontier maps
+│   │   └── {step}_map.png               # Top-down map showing island, explored area, & frontier arrows
+│   ├── chosen_snapshot/                 # Terminal evidence image selected by Answerer
+│   │   └── snapshot_{filename}.png      # e.g. snapshot_14-view_0.png
+│   └── trajectory.json                  # Episode navigation path coordinates & metrics
+├── gpt_answer.json                      # Aggregated list of predicted answers
+├── express_bench_info_*.json            # Express-Bench evaluation metadata & geodesic distances
+├── n_total_frames.json                  # Per-episode count of total RGB frames rendered
+├── n_total_snapshots.json               # Per-episode count of generated snapshot objects
+├── n_filtered_snapshots.json            # Per-episode count of snapshots retained in visual memory
+├── path_length_list.pkl / success_list.pkl # Serialized evaluation arrays for scoring scripts
+└── log_*.log                            # Full multi-agent execution logs (prompts, plans, reasoning)
+```
+
+### Per-Episode Artifacts (`results/Pred-EQA/{question_id}/`)
+
+1. **`snapshot/` (`{step}-view_{view_idx}.png`)**
+   - High-resolution RGB camera observations captured at each step along the agent's path.
+   - **Step 0**: Contains panoramic initialization views (`0-view_0.png` through `0-view_6.png` or `0-view_3.png` depending on camera yaw configuration).
+   - **Step $t \ge 1$**: Contains the primary observation frame (`{step}-view_0.png`) and any supplementary yaw rotational views (`{step}-view_1.png`, `{step}-view_2.png`).
+
+2. **`frontier/` (`{step}_{frontier_idx}.png`)**
+   - Rendered camera preview images captured from the agent's position looking directly towards candidate frontier boundary directions $\mathbf{v}_{\text{dir}}$.
+   - **Naming Scheme**: `{step}_{frontier_idx}.png` denotes candidate frontier index `{frontier_idx}` detected at step `{step}` (e.g. `3_0.png` and `3_1.png` represent two distinct exploration directions available at Step 3).
+   - **Persistence**: Only newly formed or topologically shifted frontiers at step `{step}` trigger a new preview render. Unchanged frontiers from previous steps retain their earlier preview file.
+
+3. **`frontier_video/` (`{step}.png`)**
+   - A single composite image per step assembling all currently active candidate frontier preview images into a square subplot grid.
+   - The specific frontier chosen by the low-level executor for navigation is labeled with the title **`"Chosen"`**; if the episode terminates via answer snapshot selection, the evidence snapshot is displayed with **`"Snapshot Chosen"`**.
+
+4. **`visualization/` (`{step}_map.png`)**
+   - Top-down 2D floorplan visualization of the 3D TSDF voxel volume.
+   - Renders the navigable free-space island, occupied obstacles, unexplored floor regions, the historical path trajectory line, and purple directional arrows marking candidate frontier vectors.
+
+5. **`chosen_snapshot/` (`snapshot_{snapshot_filename}.png`)**
+   - Stores the exact visual evidence frame selected by the VLM `Answerer` Agent (e.g. `snapshot_14-view_0.png`).
+   - Copied directly from `snapshot/` when the agent determines that the image contains sufficient visual information to answer the question, terminating the episode.
+
+6. **`trajectory.json`**
+   - Key metadata describing the navigation path and episode outcome:
+     ```json
+     {
+         "positions": [
+             [57, 19],
+             [55, 29],
+             [56, 39]
+         ],
+         "question_id": "1",
+         "success": true,
+         "path_length": 2.024791464830646
+     }
+     ```
+     - `positions`: 2D voxel grid coordinate sequence traversed by the agent.
+     - `question_id`: Dataset question identifier string.
+     - `success`: Ground-truth task success indicator.
+     - `path_length`: Total geodesic navigation distance traversed in meters.
+
+### Global Evaluation Artifacts (`results/Pred-EQA/`)
+
+* **`gpt_answer.json` / `gpt_answer_*.json`**: JSON list containing predicted final answers for each question:
+  ```json
+  [
+    {
+      "question_id": "1",
+      "answer": "Yes, the kitchen cabinet door is open."
+    }
+  ]
+  ```
+* **`express_bench_info_*.json`**: Metadata dictionary mapping each question ID to geodesic distance, distance to goal (`goal_dis`), final agent 3D coordinates (`final_position`), and target object 3D coordinates (`goal_position`).
+* **`n_total_frames.json`, `n_total_snapshots.json`, `n_filtered_snapshots.json`**: Diagnostic JSON dictionaries mapping episode IDs to counts of total rendered camera frames, initial visual snapshots, and curated visual snapshots retained after `snapshot_manager` compaction.
+* **`path_length_list.pkl`, `success_list.pkl`, `fail_list_*.pkl`**: Pickled Python lists storing per-episode trajectory lengths and success flags for immediate statistical processing by `get-scores.py`.
+* **`log_*.log`**: Complete execution logs recording every VLM prompt, generated XML to-do checklist (`<update_todo_list>`), pruned frontiers (`"Retain Frontiers: ..."`), and agent reasoning outputs across all steps.
 
 ## Repository Structure
 

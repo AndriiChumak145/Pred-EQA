@@ -1,11 +1,27 @@
-import os
+import argparse
 import glob
 import json
+import logging
+import os
+import random
 import re
-import argparse
+import shutil
+
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+def set_seed(seed: int = 42) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+
 
 # Panel Display Configuration Constants
 MAX_OBSERVATION_LINES = 10         # Maximum lines of observation text to render in bottom card
@@ -29,21 +45,18 @@ def load_model_answers(results_root="Pred-EQA/results/Pred-EQA"):
         glob.glob("Pred-EQA/gpt_answer*.json")
     ))
     for afile in answer_files:
-        try:
-            with open(afile, "r", encoding="utf-8") as f:
-                content = json.load(f)
-                if isinstance(content, list):
-                    for item in content:
-                        qid = str(item.get("question_id"))
-                        ans = item.get("answer")
-                        if ans and qid not in answers:
-                            answers[qid] = ans
-                elif isinstance(content, dict):
-                    for qid, ans in content.items():
-                        if ans and str(qid) not in answers:
-                            answers[str(qid)] = ans
-        except Exception:
-            pass
+        with open(afile, "r", encoding="utf-8") as f:
+            content = json.load(f)
+            if isinstance(content, list):
+                for item in content:
+                    qid = str(item.get("question_id"))
+                    ans = item.get("answer")
+                    if ans and qid not in answers:
+                        answers[qid] = ans
+            elif isinstance(content, dict):
+                for qid, ans in content.items():
+                    if ans and str(qid) not in answers:
+                        answers[str(qid)] = ans
     return answers
 
 def parse_episode_plans(episode_id, results_root="Pred-EQA/results/Pred-EQA"):
@@ -132,7 +145,7 @@ def parse_episode_plans(episode_id, results_root="Pred-EQA/results/Pred-EQA"):
         
     latest_plan = ""
     for s in range(max_step_index + 1):
-        if s in step_plans and step_plans[s]:
+        if step_plans.get(s):
             latest_plan = step_plans[s]
         elif latest_plan:
             step_plans[s] = latest_plan
@@ -186,6 +199,91 @@ def clean_rationale(text):
     text = re.sub(r'^(Step-by-step Reasoning:|\d\d:\d\d:\d\d\s*-\s*)+', '', text, flags=re.IGNORECASE).strip()
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     return " ".join(lines)
+
+def load_concept_ranking(episode_id, results_root="Pred-EQA/results/Pred-EQA", concept_method="3dgs_method_b"):
+    """Load step-by-step ranked concepts from concept_memory/ranked_concepts.json."""
+    json_path = f"{results_root}/{episode_id}/concept_memory/{concept_method}/ranked_concepts.json"
+    if os.path.exists(json_path):
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data
+    
+    return {}
+
+def draw_concept_panel(draw, step, concepts, panel_x, panel_w, canvas_h, font_title, font_text, font_small):
+    """Render the Ranked Concept Memory column."""
+    # Background
+    draw.rectangle([panel_x, 0, panel_x + panel_w, canvas_h], fill=(14, 18, 25))
+    # Left accent border
+    draw.line([(panel_x, 0), (panel_x, canvas_h)], fill=(0, 200, 255), width=3)
+    
+    # Header Banner
+    draw.rectangle([panel_x + 10, 15, panel_x + panel_w - 10, 80], fill=(24, 32, 45), outline=(50, 70, 95), width=1)
+    draw.text((panel_x + 20, 25), "CONCEPT RANKING", fill=(0, 230, 255), font=font_title)
+    draw.text((panel_x + 20, 55), f"Step {step} Saliency", fill=(180, 200, 220), font=font_small)
+    
+    curr_y = 95
+    card_x1 = panel_x + 10
+    card_x2 = panel_x + panel_w - 10
+    card_h = 56
+    
+    if not concepts:
+        draw.rectangle([card_x1, curr_y, card_x2, curr_y + 60], fill=(22, 28, 38), outline=(50, 60, 75), width=1)
+        draw.text((card_x1 + 15, curr_y + 20), "• No concepts recorded", fill=(160, 170, 185), font=font_small)
+        return
+
+    # Render up to top 15 concepts
+    for rank_idx, item in enumerate(concepts[:15]):
+        if curr_y + card_h > canvas_h - 15:
+            break
+            
+        c_name = item.get("concept", "unknown")
+        # In case it's still using the old mock schema, fallback gracefully
+        peak = item.get("raw_max", item.get("peak_intensity", 0.0))
+        sim = item.get("global_sim", 0.0)
+        area = item.get("area", item.get("area_pct", 0.0))
+        rank = rank_idx + 1
+        
+        # Rank Badge
+        badge_bg = (32, 40, 52)
+        badge_fg = (180, 200, 225)
+        if rank == 1:
+            badge_bg = (190, 150, 20)
+            badge_fg = (255, 255, 255)
+        elif rank == 2:
+            badge_bg = (130, 140, 155)
+            badge_fg = (255, 255, 255)
+        elif rank == 3:
+            badge_bg = (165, 95, 40)
+            badge_fg = (255, 255, 255)
+            
+        # Card Background
+        draw.rectangle([card_x1, curr_y, card_x2, curr_y + card_h], fill=(20, 26, 36), outline=(45, 58, 75), width=1)
+        
+        # Rank
+        draw.rectangle([card_x1 + 6, curr_y + 8, card_x1 + 36, curr_y + 48], fill=badge_bg)
+        draw.text((card_x1 + 12, curr_y + 18), f"{rank}", fill=badge_fg, font=font_small)
+        
+        # Concept Name & Source Tag (Q/P/R/I)
+        c_source = item.get("source", "")
+        c_title = c_name.title()
+        if c_source:
+            c_display = f"{c_title} ({c_source.upper()})"
+        else:
+            c_display = c_title
+
+        # Truncate if too long for 375px width
+        if len(c_display) > 32:
+            c_display = c_display[:29] + "..."
+            
+        draw.text((card_x1 + 45, curr_y + 7), c_display, fill=(245, 245, 250), font=font_small)
+        
+        # Metrics
+        metrics_y = curr_y + 32
+        stats_text = f"Pk: {peak:.2e} | Sim: {sim:.2f} | A: {area:.0f}%"
+        draw.text((card_x1 + 45, metrics_y), stats_text, fill=(170, 190, 210), font=font_small)
+        
+        curr_y += card_h + 6
 
 def draw_reasoning_panel(draw, step, plan_text, action_info, reason_text, obs_text, panel_x, panel_w, canvas_h, font_title, font_text, font_small):
     """Render the high-level plan & low-level reasoning panel on the right side of the canvas."""
@@ -304,19 +402,19 @@ def draw_reasoning_panel(draw, step, plan_text, action_info, reason_text, obs_te
             draw.text((card_x1 + 15, content_y), rline, fill=(220, 230, 240), font=font_small)
             content_y += 18
 
-def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA", output_dir=None, show_reasoning=True):
-    if not os.path.exists(f"{results_root}/{episode_id}/visualization") and os.path.exists(f"Pred-EQA/results/Pred-EQA-10/{episode_id}/visualization"):
-        results_root = "Pred-EQA/results/Pred-EQA-10"
-        
+def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA", output_dir=None, show_reasoning=True, show_concepts=False, video_filename="video.mp4", concept_method="3dgs_method_b"):
     base_dir = f"{results_root}/{episode_id}"
     if not os.path.exists(base_dir):
-        print(f"Error: Episode directory {base_dir} does not exist.")
-        return False
+        raise FileNotFoundError(f"Episode directory does not exist: {base_dir}")
+    if not os.path.exists(f"{base_dir}/visualization"):
+        raise FileNotFoundError(f"Visualization directory missing at: {base_dir}/visualization")
     if output_dir is None:
-        output_dir = f"Pred-EQA/videos/{episode_id}"
+        if show_concepts:
+            output_dir = f"Pred-EQA/videos_concept_ranking/{concept_method}/{episode_id}"
+        else:
+            output_dir = f"Pred-EQA/videos/{episode_id}"
     frames_dir = f"{output_dir}/frames"
     if os.path.exists(frames_dir):
-        import shutil
         shutil.rmtree(frames_dir)
     os.makedirs(frames_dir, exist_ok=True)
     
@@ -324,21 +422,71 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
     gt_data = load_express_bench_metadata()
     model_answers = load_model_answers(results_root)
     step_plans, chosen_actions, step_reasons, step_observations = parse_episode_plans(episode_id, results_root)
+    concept_steps = load_concept_ranking(episode_id, results_root, concept_method) if show_concepts else {}
     
     ep_info = gt_data.get(str(episode_id), {})
     question = ep_info.get("question", "Question unavailable.")
     expected_answer = ep_info.get("answer", "Answer unavailable.")
     model_answer = model_answers.get(str(episode_id), "Model answer unavailable.")
     
+    # Dynamic prompt & saliency mode detection
+    dyn_prompts_file = None
+    candidate_dyn_paths = [
+        f"{base_dir}/dynamic_prompts.json",
+        f"{results_root}/dynamic_prompts.json",
+        f"Pred-EQA/results/Pred-EQA/{episode_id}/dynamic_prompts.json",
+        f"Pred-EQA/results/Pred-EQA_3dgs_gradcam/{episode_id}/dynamic_prompts.json"
+    ]
+    for cdp in candidate_dyn_paths:
+        if os.path.exists(cdp):
+            dyn_prompts_file = cdp
+            break
+            
+    dyn_steps = {}
+    if dyn_prompts_file:
+        with open(dyn_prompts_file, "r", encoding="utf-8") as f:
+            dyn_data = json.load(f)
+            dyn_steps = dyn_data.get("steps", {})
+
+    results_root_str = str(results_root)
+    if "dyn_llm_extracted" in results_root_str:
+        mode_label = "Qwen LLM Extracted"
+        prompt_key = "llm_extracted"
+        prompt_text = None
+    elif "dyn_active_todos" in results_root_str:
+        mode_label = "Active Todos Plan"
+        prompt_key = "active_todos"
+        prompt_text = None
+    elif "dyn_raw_rationale" in results_root_str:
+        mode_label = "Raw Planner Rationale"
+        prompt_key = "raw_rationale"
+        prompt_text = None
+    elif "keyword_" in results_root_str:
+        m = re.search(r'keyword_([a-zA-Z0-9_]+)', results_root_str)
+        keyword = m.group(1).replace('_', ' ') if m else "Keyword"
+        mode_label = "Static Keyword"
+        prompt_key = None
+        prompt_text = keyword
+    elif "full_prompt" in results_root_str:
+        mode_label = "Full Question"
+        prompt_key = None
+        prompt_text = question
+    else:
+        mode_label = "Full Question"
+        prompt_key = None
+        prompt_text = question
+
+    # Decide layout
     main_canvas_w = 1920
-    panel_w = 640 if show_reasoning else 0
-    canvas_w = main_canvas_w + panel_w
+    concept_panel_w = 375 if show_concepts else 0
+    reasoning_panel_w = 800 if show_reasoning else 0
+    canvas_w = main_canvas_w + concept_panel_w + reasoning_panel_w
     canvas_h = 1080
     banner_h = 180
     img_area_h = canvas_h - banner_h # 900px
     
-    map_w = 880
-    map_h = 880
+    map_w = 720
+    map_h = 720
     
     grid_cell_w = 490
     grid_cell_h = 430
@@ -355,24 +503,22 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
 
     map_files = sorted(glob.glob(f"{base_dir}/visualization/*_map.png"))
     num_steps = len(map_files)
-    is_zero_step = False
     if num_steps == 0:
         snap_files = glob.glob(f"{base_dir}/snapshot/*") + glob.glob(f"{base_dir}/chosen_snapshot/*")
         if snap_files:
             num_steps = 1
-            is_zero_step = True
         else:
-            print(f"Error: No visualization maps found in {base_dir}/visualization/")
+            logger.error(f"No visualization maps found in {base_dir}/visualization/")
             return False
         
-    print(f"Generating video for Episode {episode_id} ({num_steps} steps) [Reasoning Panel: {show_reasoning}]...")
+    logger.info(f"Generating video for Episode {episode_id} ({num_steps} steps) [Concepts: {show_concepts}, Reasoning: {show_reasoning}]...")
 
-    out_video_path = f"{output_dir}/video.mp4"
+    out_video_path = f"{output_dir}/{video_filename}"
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     video_writer = cv2.VideoWriter(out_video_path, fourcc, 2.0, (canvas_w, canvas_h))
     
     if not video_writer.isOpened():
-        print(f"Error: Failed to open VideoWriter for path {out_video_path}")
+        logger.error(f"Failed to open VideoWriter for path {out_video_path}")
         return False
 
     try:
@@ -380,6 +526,36 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
             canvas = Image.new("RGB", (canvas_w, canvas_h), color=(25, 28, 35))
             draw = ImageDraw.Draw(canvas)
             
+            # Step prompt extraction
+            if prompt_key and dyn_steps:
+                step_dict = dyn_steps.get(str(step), dyn_steps.get(step, {}))
+                raw_step_prompt = step_dict.get(prompt_key, "")
+                if not raw_step_prompt:
+                    raw_step_prompt = question
+            elif prompt_text:
+                raw_step_prompt = prompt_text
+            else:
+                raw_step_prompt = question
+                
+            step_prompt_clean = " ".join(str(raw_step_prompt).replace("\n", " ").split())
+            
+            # Render Saliency Prompt Banner above Hero Action tile (up to 5 lines)
+            draw.rectangle([20, 15, 900, 150], fill=(22, 28, 38), outline=(70, 90, 120), width=1)
+            draw.text((30, 20), f"SALIENCY PROMPT [{mode_label}]:", fill=(255, 215, 0), font=font_small)
+            
+            wrapped_prompt_lines = wrap_text(step_prompt_clean, font_small, 850, draw)
+            if len(wrapped_prompt_lines) > 5:
+                fifth_line = wrapped_prompt_lines[4]
+                while fifth_line and draw.textbbox((0, 0), fifth_line + "...", font=font_small)[2] > 850:
+                    fifth_line = fifth_line.rsplit(" ", 1)[0] if " " in fifth_line else fifth_line[:-1]
+                fifth_line = fifth_line.rstrip() + "..."
+                wrapped_prompt_lines = wrapped_prompt_lines[:4] + [fifth_line]
+            
+            prompt_y = 44
+            for pline in wrapped_prompt_lines[:5]:
+                draw.text((30, prompt_y), pline, fill=(120, 230, 255), font=font_small)
+                prompt_y += 20
+
             # 1. Load and place Chosen Frontier / Action (Large Left Hero Panel)
             action = chosen_actions.get(step, {})
             action_type = action.get("type", "frontier")
@@ -393,7 +569,9 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
             hero_color = (0, 160, 75)
             hero_outline = (0, 255, 120)
 
-            if is_final_step and chosen_snap_files:
+            if is_final_step:
+                if not chosen_snap_files:
+                    raise FileNotFoundError(f"Final step {step} requires a chosen snapshot in {base_dir}/chosen_snapshot/, but none was found.")
                 frontier_img = Image.open(chosen_snap_files[0]).convert("RGB")
                 hero_title = "ACTION: Chosen Visual Snapshot"
                 hero_color = (200, 150, 0)
@@ -406,21 +584,42 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
                     frontier_raw_files = sorted(glob.glob(f"{base_dir}/frontier/{step}_*.png"))
                     if frontier_raw_files:
                         frontier_img = Image.open(frontier_raw_files[0]).convert("RGB")
+                    else:
+                        # Carry over the active frontier being navigated to from recent decision step
+                        prev_frontier = None
+                        for prev_s in range(step - 1, -1, -1):
+                            prev_act = chosen_actions.get(prev_s, {})
+                            prev_id = prev_act.get("id", 0)
+                            p_file = f"{base_dir}/frontier/{prev_s}_{prev_id}.png"
+                            if os.path.exists(p_file):
+                                prev_frontier = p_file
+                                break
+                            prev_matches = sorted(glob.glob(f"{base_dir}/frontier/{prev_s}_*.png"))
+                            if prev_matches:
+                                prev_frontier = prev_matches[0]
+                                break
+                        if prev_frontier and os.path.exists(prev_frontier):
+                            frontier_img = Image.open(prev_frontier).convert("RGB")
+                            hero_title = "ACTION: Navigating to Frontier"
+                        else:
+                            raise FileNotFoundError(f"No frontier image found for step {step} or previous steps in {base_dir}")
             elif action_type == "snapshot":
-                if chosen_snap_files:
-                    frontier_img = Image.open(chosen_snap_files[0]).convert("RGB")
+                snap_file = f"{base_dir}/snapshot/{step}-view_{action_id}.png"
+                if os.path.exists(snap_file):
+                    frontier_img = Image.open(snap_file).convert("RGB")
+                elif os.path.exists(f"{base_dir}/snapshot/{step}-view_0.png"):
+                    frontier_img = Image.open(f"{base_dir}/snapshot/{step}-view_0.png").convert("RGB")
+                else:
+                    raise FileNotFoundError(f"Snapshot action for step {step} specified, but no snapshot found in {base_dir}/snapshot/")
             
             if frontier_img is None:
-                if chosen_snap_files:
-                    frontier_img = Image.open(chosen_snap_files[0]).convert("RGB")
-                else:
-                    frontier_img = Image.new("RGB", (map_w, map_h), color=(40, 44, 52))
+                raise FileNotFoundError(f"Failed to resolve an action/observation image for step {step} in {base_dir}")
 
             frontier_hero = frontier_img.copy()
             frontier_hero.thumbnail((map_w, map_h), Image.Resampling.LANCZOS)
             
-            fx = (920 - frontier_hero.width) // 2
-            fy = (img_area_h - frontier_hero.height) // 2
+            fx = 20 + (880 - frontier_hero.width) // 2
+            fy = 160 + (730 - frontier_hero.height) // 2
             canvas.paste(frontier_hero, (fx, fy))
             
             draw.rectangle([fx, fy, fx + frontier_hero.width, fy + frontier_hero.height], outline=hero_outline, width=4)
@@ -453,10 +652,10 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
                 slot3_color = (255, 255, 255)
 
             grid_positions = [
-                (940, 15),                    # Cell 0: Memory Snap 0
-                (940 + grid_cell_w + 20, 15),   # Cell 1: Memory Snap 1
-                (940, 15 + grid_cell_h + 15),   # Cell 2: Memory Snap 2
-                (940 + grid_cell_w + 20, 15 + grid_cell_h + 15) # Cell 3: Map / Chosen Snap
+                (904, 15),                    # Cell 0: Memory Snap 0
+                (904 + grid_cell_w + 14, 15),   # Cell 1: Memory Snap 1
+                (904, 15 + grid_cell_h + 10),   # Cell 2: Memory Snap 2
+                (904 + grid_cell_w + 14, 15 + grid_cell_h + 10) # Cell 3: Map / Chosen Snap
             ]
 
             # Paste Memory Snapshots
@@ -505,13 +704,27 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
                 draw.text((30, img_area_h + 120), "Status: ", fill=(255, 165, 0), font=font_title)
                 draw.text((130, img_area_h + 122), f"Exploring... (Step {step}/{num_steps - 1})", fill=(200, 200, 200), font=font_text)
 
-            # 5. Right-Hand Reasoning & Plan Column (if enabled)
+            # 5. Middle Ranked Concept Memory Column (if enabled)
+            if show_concepts:
+                concepts_list = concept_steps.get(str(step))
+                if not concepts_list:
+                    for prev_s in range(step - 1, -1, -1):
+                        if str(prev_s) in concept_steps and concept_steps[str(prev_s)]:
+                            concepts_list = concept_steps[str(prev_s)]
+                            break
+                if not isinstance(concepts_list, list):
+                    concepts_list = []
+                concept_x = main_canvas_w
+                draw_concept_panel(draw, step, concepts_list, concept_x, concept_panel_w, canvas_h, font_title, font_text, font_small)
+
+            # 6. Right-Hand Reasoning & Plan Column (if enabled)
             if show_reasoning:
                 plan_text = step_plans.get(step, "")
                 action_info = chosen_actions.get(step, {})
                 reason_text = step_reasons.get(step, "")
                 obs_text = step_observations.get(step, "")
-                draw_reasoning_panel(draw, step, plan_text, action_info, reason_text, obs_text, main_canvas_w, panel_w, canvas_h, font_title, font_text, font_small)
+                reasoning_x = main_canvas_w + concept_panel_w
+                draw_reasoning_panel(draw, step, plan_text, action_info, reason_text, obs_text, reasoning_x, reasoning_panel_w, canvas_h, font_title, font_text, font_small)
                 
             # Save frame image
             frame_path = f"{output_dir}/frames/step_{step:02d}.png"
@@ -529,7 +742,20 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
                     video_writer.write(cv_img)
     finally:
         video_writer.release()
-    print(f"Successfully generated video: {out_video_path}")
+
+    # Package concept memory artifacts (ranked_concepts.json + grids) into output_dir
+    if show_concepts:
+        concept_dir = f"{results_root}/{episode_id}/concept_memory/{concept_method}"
+        json_src = f"{concept_dir}/ranked_concepts.json"
+        if os.path.exists(json_src):
+            shutil.copy2(json_src, f"{output_dir}/ranked_concepts.json")
+            
+        grids_out_dir = f"{output_dir}/grids"
+        os.makedirs(grids_out_dir, exist_ok=True)
+        for grid_file in sorted(glob.glob(f"{concept_dir}/step_*/grid_step_*.png")):
+            shutil.copy2(grid_file, f"{grids_out_dir}/{os.path.basename(grid_file)}")
+
+    logger.info(f"Successfully generated video: {out_video_path}")
     return True
 
 if __name__ == "__main__":
@@ -539,6 +765,20 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=str, default=None, help="Custom output directory for video and frames")
     parser.add_argument("--show-reasoning", action="store_true", default=True, help="Include High-Level Plan & Reasoning column on the right side")
     parser.add_argument("--no-reasoning", action="store_false", dest="show_reasoning", help="Disable Reasoning panel and keep 1920x1080 canvas")
+    parser.add_argument("--show-concepts", action="store_true", default=False, help="Include Ranked Concept Memory column on the canvas")
+    parser.add_argument("--no-concepts", action="store_false", dest="show_concepts", help="Disable Ranked Concept Memory column")
+    parser.add_argument("--concept-method", type=str, default="3dgs_method_b", help="Concept ranking method (e.g., rgb_2d or 3dgs_method_b)")
+    parser.add_argument("--video-name", type=str, default="video.mp4", help="Filename of the generated video (default: video.mp4)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     args = parser.parse_args()
+    set_seed(args.seed)
     
-    create_episode_video(episode_id=args.episode_id, results_root=args.results_root, output_dir=args.output_dir, show_reasoning=args.show_reasoning)
+    create_episode_video(
+        episode_id=args.episode_id,
+        results_root=args.results_root,
+        output_dir=args.output_dir,
+        show_reasoning=args.show_reasoning,
+        show_concepts=args.show_concepts,
+        video_filename=args.video_name,
+        concept_method=args.concept_method
+    )
