@@ -5,26 +5,26 @@ from src.long_term_memory import TextLongTermMemory
 
 
 class SceneIntegration:
-    """新的场景整合类，整合文本长期记忆和规划"""
+    """New scene integration class, integrating text long-term memory and planning."""
 
     def __init__(self, scene, vlm_model=None, vlm_processor=None):
         self.scene = scene
 
-        # 初始化新的长期记忆和规划系统
+        # Initialize new long-term memory and planning system
         self.long_term_memory = TextLongTermMemory()
 
 
-        # 探索历史跟踪
+        # Exploration history tracking
         self.current_step = 0
         self.question = ""
         self.target_objects = []
-        self.exploration_path = []  # 记录完整的探索路径
+        self.exploration_path = []  # Record complete exploration path
 
 
     def record_structured_agent_output(self, step: int, agent_type: str, structured_output: Dict,
                                      raw_response: str, position: np.ndarray):
-        """记录结构化的agent输出"""
-        # 使用长期记忆记录结构化输出
+        """Record structured agent output."""
+        # Record structured output using long-term memory
         self.long_term_memory.record_structured_agent_output(step, agent_type, structured_output, raw_response, position)
 
         logging.info(f"Recorded structured output for {agent_type} at step {step}")

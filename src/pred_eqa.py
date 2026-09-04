@@ -16,13 +16,13 @@ from src.long_term_memory import TextLongTermMemory
 from src.plan_extraction_utils import extract_predictive_plan
 
 def safe_findall(pattern, string):
-    """安全的正则表达式查找函数,处理字符串可能为None的情况"""
+    """Safe regex findall function that handles cases where string may be None."""
     if string is None:
         return []
     return re.findall(pattern, string)
 
 def safe_strip(string):
-    """安全的字符串strip函数,处理字符串可能为None的情况"""
+    """Safe string strip function that handles cases where string may be None."""
     if string is None:
         return ""
     return string.strip()
@@ -187,25 +187,25 @@ def call_openai_api_text(sys_prompt, contents) -> Optional[str]:
 
 
 def parse_number_list(numbers_str: str) -> list:
-    """解析数字列表字符串，如 '0, 1, 2' 或 '0,1,2'"""
+    """Parse number list string, e.g. '0, 1, 2' or '0,1,2'."""
     if not numbers_str:
         return []
 
-    # 特殊处理：如果字符串是"."，表示保留全部
+    # Special case: if the string is ".", retain all
     if numbers_str.strip() == ".":
-        return ["ALL"]  # 返回包含"ALL"的列表，而不是字符串本身
+        return ["ALL"]  # Return list containing "ALL" instead of string itself
 
-    # 清理字符串
+    # Clean up string
     clean_str = re.sub(r'[{}()\[\]]', '', numbers_str)
     clean_str = clean_str.replace(' ', '')
-    # 去除末尾的标点符号，如句点
+    # Remove trailing punctuation, e.g. periods
     clean_str = clean_str.rstrip('.,;:!?')
 
-    # 如果清理后是空字符串，返回空列表表示保留空集合
+    # If empty after cleaning, return empty list indicating retaining empty set
     if not clean_str:
         return []
 
-    # 分割并转换为整数
+    # Split and convert to integers
     number_strs = clean_str.split(',')
     numbers = []
 
@@ -219,56 +219,56 @@ def parse_number_list(numbers_str: str) -> list:
 
 def parse_retain_response(response: str, prefix: str = "Retain Snapshots") -> list:
     """
-    通用的解析函数，从模型响应中解析 "Retain X:" 后面的数字列表
+    Generic parsing function to parse the number list following "Retain X:" from model response.
     
     Args:
-        response: 模型响应字符串
-        prefix: 前缀，如 "Retain Snapshots" 或 "Retain Frontiers"
+        response: Model response string
+        prefix: Prefix, e.g. "Retain Snapshots" or "Retain Frontiers"
     
-    处理多种格式：
+    Handles multiple formats:
     1. "Retain X: {0, 1, 2}."
     2. "Retain X: 0, 1, 2."
     3. "Retain X: 0, 1, 2, 3, 4, 5, 6, 7, 8."
     
-    策略：
-    - 查找所有匹配项，使用最后一个（避免匹配到格式说明）
-    - 支持带花括号和不带花括号的格式
-    - 处理句号、换行等结尾符号
+    Strategies:
+    - Find all matches and use the last one (avoid matching format specifications)
+    - Support both formats with and without curly braces
+    - Handle trailing periods, newlines, etc.
     """
     if not response:
         return []
     
     select_id = []
     
-    # 策略1：匹配带花括号的格式 "Retain X: {0, 1, 2}."
-    # 使用更严格的模式，确保匹配实际数字列表而不是格式说明
+    # Strategy 1: Match format with curly braces "Retain X: {0, 1, 2}."
+    # Use stricter pattern to ensure matching actual number list rather than format instructions
     pattern_with_braces = rf'{prefix}:\s*{{([0-9,\s]+)}}'
     matches_with_braces = safe_findall(pattern_with_braces, response)
     
     if matches_with_braces:
-        # 取最后一个匹配（最可能是实际答案）
+        # Take the last match (most likely the actual answer)
         final_match = matches_with_braces[-1].strip()
         if final_match:
             select_id = parse_number_list(final_match)
             if select_id:
                 return select_id
     
-    # 策略2：匹配不带花括号的格式 "Retain X: 0, 1, 2."
-    # 改进正则：要求至少有一个数字，并且不是格式说明中的占位符
-    # 排除格式说明中的 "{i, ...}" 这样的模式
+    # Strategy 2: Match format without curly braces "Retain X: 0, 1, 2."
+    # Improved regex: require at least one number, and not a placeholder in format instructions
+    # Exclude patterns like "{i, ...}" in format instructions
     pattern_without_braces = rf'{prefix}:\s*([0-9]+(?:\s*,\s*[0-9]+)*)'
     matches_without_braces = safe_findall(pattern_without_braces, response)
     
     if matches_without_braces:
-        # 取最后一个匹配（最可能是实际答案）
-        # 但我们需要检查整行，因为可能包含被文本分隔的数字
+        # Take the last match (most likely the actual answer)
+        # But we need to inspect the whole line because numbers might be separated by text
         lines = response.split('\n')
         for line in reversed(lines):
             line = line.strip()
             if f'{prefix}:' in line:
-                # 提取冒号后的整行内容
+                # Extract entire content after colon
                 after_colon = line.split(f'{prefix}:', 1)[-1].strip()
-                # 提取所有数字（包括被文本分隔的）
+                # Extract all numbers (including those separated by text)
                 numbers = re.findall(r'\d+', after_colon)
                 if numbers:
                     try:
@@ -276,25 +276,25 @@ def parse_retain_response(response: str, prefix: str = "Retain Snapshots") -> li
                         return select_id
                     except ValueError:
                         continue
-        # 如果上面的反向查找失败，使用原来的方法作为备选
+        # If reverse search above fails, fall back to original method
         final_match = matches_without_braces[-1].strip()
         if final_match:
             select_id = parse_number_list(final_match)
             if select_id:
                 return select_id
     
-    # 策略3：如果上面都没匹配到，尝试更宽松的模式
-    # 查找包含实际数字（不是占位符）的行
+    # Strategy 3: If none of the above matched, try a more lenient pattern
+    # Search for lines containing actual numbers (not placeholders)
     lines = response.split('\n')
-    for line in reversed(lines):  # 从后往前查找
+    for line in reversed(lines):  # Search from back to front
         line = line.strip()
-        # 确保这一行包含 "Retain X:" 且后面有数字
+        # Ensure line contains "Retain X:" followed by numbers
         if f'{prefix}:' in line:
-            # 提取冒号后的部分
+            # Extract content after colon
             after_colon = line.split(f'{prefix}:', 1)[-1].strip()
-            # 去除可能的引号和格式说明
+            # Strip potential quotes and formatting symbols
             after_colon = re.sub(r'[{}()\[\]"]', '', after_colon)
-            # 尝试提取所有数字（包括被文本分隔的数字）
+            # Try extracting all numbers (including text-separated numbers)
             numbers = re.findall(r'\d+', after_colon)
             if numbers:
                 try:
@@ -303,35 +303,35 @@ def parse_retain_response(response: str, prefix: str = "Retain Snapshots") -> li
                 except ValueError:
                     continue
     
-    # 如果所有策略都失败，返回空列表
+    # If all strategies fail, return empty list
     return []
 
 
 def parse_retain_snapshots_response(response: str) -> list:
-    """解析 Retain Snapshots 响应"""
+    """Parse Retain Snapshots response."""
     return parse_retain_response(response, "Retain Snapshots")
 
 
 def parse_retain_frontiers_response(response: str) -> list:
-    """解析 Retain Frontiers 响应"""
+    """Parse Retain Frontiers response."""
     return parse_retain_response(response, "Retain Frontiers")
 
 def remove_digits(text: str) -> str:
-    """将字符串中所有数字替换为空格"""
+    """Replace all digits in string with spaces."""
     return re.sub(r'\d', ' ', text)
 
 
 def generate_step_summary(step_num, agent_outputs, question, step=None):
     """
-    为一个step生成综合总结，涵盖所有agent的输出
-    优化：增强总结质量，添加更多上下文信息
+    Generate a comprehensive summary for a step, covering outputs of all agents.
+    Optimization: enhance summary quality, add more contextual information.
     Args:
-        step_num: step编号
-        agent_outputs: 该step内所有agent的输出列表
-        question: 当前问题
-        step: 当前step对象，用于获取memory信息
+        step_num: Step number
+        agent_outputs: List of outputs from all agents in this step
+        question: Current question
+        step: Current step object, used to retrieve memory info
     Returns:
-        step的综合总结
+        Comprehensive step summary
     """
     if not agent_outputs:
         return "No agent outputs for this step."
@@ -357,7 +357,7 @@ AVOID relative directional references tied to transient views (e.g., “left of 
 If no meaningful activity or observation occurred, return "No significant activity in this step."
 """
 
-    # 添加memory信息到prompt中
+    # Add memory info to prompt
     memory_info_str = ""
     if step is not None:
         try:
@@ -379,19 +379,19 @@ If no meaningful activity or observation occurred, return "No significant activi
 
 def generate_response_summary(response: str, response_type: str, question: Optional[str] = None, step: Optional[dict] = None) -> str:
     """
-    使用VLM生成响应总结，基于问题过滤相关信息
+    Use VLM to generate response summary, filtering relevant information based on question.
     Args:
-        response: VLM的完整响应
-        response_type: 响应类型
-        question: 当前的问题，用于过滤相关信息
-        step: 当前step对象，用于获取memory信息
+        response: Full VLM response
+        response_type: Response type
+        question: Current question, used to filter relevant information
+        step: Current step object, used to retrieve memory info
     Returns:
-        响应的总结文本
+        Summary text of response
     """
     if not response or response.strip() == "":
         return "No response to summarize"
 
-    # 如果没有提供问题，使用原有逻辑
+    # If no question is provided, use original logic
     if not question:
         question_context = ""
     else:
@@ -426,14 +426,14 @@ Keep under 100 words."""
 
 def extract_structured_output_from_response(response: str, response_type: str, question: Optional[str] = None, step: Optional[dict] = None) -> dict:
     """
-    从VLM响应中提取结构化输出信息，基于问题过滤相关信息
+    Extract structured output information from VLM response, filtering relevant information based on question.
     Args:
-        response: VLM的完整响应
-        response_type: 响应类型
-        question: 当前的问题，用于过滤相关信息
-        step: 当前step对象，用于获取memory信息
+        response: Full VLM response
+        response_type: Response type
+        question: Current question, used to filter relevant information
+        step: Current step object, used to retrieve memory info
     Returns:
-        结构化输出字典
+        Structured output dictionary
     """
     response_summary = generate_response_summary(response, response_type, question, step)
     return {
@@ -697,7 +697,7 @@ def format_high_level_plan_prompt(
         egocentric_view=False,
         use_snapshot_class=True,
         image_goal=None,
-        step=None,  # 添加step参数用于memory信息
+        step=None,  # Add step parameter for memory info
 ):
     sys_prompt = """Task: You are a HIGH-LEVEL EXPLORATION PLANNER AGENT responsible for devising a long-term navigation and search plan to answer the user's question. Based on the question, you must break down the goal into a sequence of high-level tasks (e.g., go to a room, find an object, observe an attribute) and output them as an ordered to-do list. This plan will guide the low-level agents in subsequent steps.
 
@@ -884,13 +884,13 @@ def format_force_answer_prompt(
 
 def get_agent_outputs_by_step_and_type(step, step_num, agent_types=None):
     """
-    优化的记忆检索函数：一次性获取指定step中指定类型agent的输出
+    Optimized memory retrieval function: get outputs of specified agent types in a given step in one go.
     Args:
-        step: 当前step对象
-        step_num: 要检索的step编号
-        agent_types: 要检索的agent类型列表，如果为None则检索所有类型
+        step: Current step object
+        step_num: Step number to retrieve
+        agent_types: List of agent types to retrieve; if None, retrieves all types
     Returns:
-        字典，键为agent类型，值为该类型的所有输出
+        Dictionary where keys are agent types and values are all outputs of that type
     """
     if 'scene' not in step or step['scene'] is None:
         return {}
@@ -898,11 +898,11 @@ def get_agent_outputs_by_step_and_type(step, step_num, agent_types=None):
     # agent_execution_order = ["frontier_manager", "snapshot_manager", "answerer", "planner", "forced_answerer"]
     agent_execution_order = ["snapshot_manager", "frontier_manager", "answerer", "planner", "forced_answerer"]
     
-    # 如果没有指定agent类型，则使用默认顺序
+    # If no agent types specified, use default order
     if agent_types is None:
         agent_types = agent_execution_order
     
-    # 一次性检索所有需要的agent输出
+    # Retrieve all required agent outputs at once
     agent_outputs = {}
     try:
         all_current_step_outputs = []
@@ -912,7 +912,7 @@ def get_agent_outputs_by_step_and_type(step, step_num, agent_types=None):
                 if output.step == step_num:
                     all_current_step_outputs.append((agent_type, output))
         
-        # 按agent类型组织输出
+        # Organize outputs by agent type
         for agent_type, output in all_current_step_outputs:
             if agent_type not in agent_outputs:
                 agent_outputs[agent_type] = []
@@ -923,7 +923,7 @@ def get_agent_outputs_by_step_and_type(step, step_num, agent_types=None):
                 agent_outputs[agent_type].append({
                     'content': output.structured_decision['raw_response_summary'],
                     'timestamp': getattr(output, 'timestamp', None),
-                    'raw_output': output  # 保留原始输出以供需要时使用
+                    'raw_output': output  # Keep raw output for later use if needed
                 })
     except Exception as e:
         logging.warning(f"Error retrieving agent outputs for step {step_num}: {e}")
@@ -933,41 +933,41 @@ def get_agent_outputs_by_step_and_type(step, step_num, agent_types=None):
 
 def format_memory_info(step, max_steps=50, outside=True, only_high_level_plan=False):
     """
-    格式化前N个step的memory信息，使用step-level的综合总结
+    Format memory info for previous N steps using step-level comprehensive summaries.
     
-    功能说明：
-    - 优先检索预生成的总结，避免冗余生成
-    - 添加当前step中已执行agent的详细记忆
-    - 提高检索效率，添加缓存机制，改进信息组织
-    - 添加high-level planner的结构化信息（优先使用当前step的，如果没有则使用上一个step的）
+    Functionality:
+    - Prioritize retrieving pre-generated summaries to avoid redundant generation
+    - Add detailed memories of agents already executed in current step
+    - Improve retrieval efficiency, add caching mechanism, and improve information organization
+    - Add structured info from high-level planner (prioritize current step's; if not present, use previous step's)
     
     Args:
-        step: 当前step对象，包含scene信息
-            必需字段: 'scene', 'current_step', 'question', 'current_position'
+        step: Current step object, containing scene information
+            Required fields: 'scene', 'current_step', 'question', 'current_position'
             
-        max_steps: int, 默认50
-            最大显示的历史step数量。控制"Previous Steps Summary"部分显示多少个历史步骤的总结。
-            数值越大，显示的历史信息越多，但可能导致prompt过长。
+        max_steps: int, default 50
+            Maximum number of historical steps to display. Controls how many historical step summaries are shown in "Previous Steps Summary".
+            Larger values show more history, but may make the prompt too long.
             
-        outside: bool, 默认True
-            是否包含历史步骤总结。
-            - True: 完整输出，包含"Previous Steps Summary"部分（显示前max_steps个历史步骤）
-            - False: 不包含历史步骤总结，只显示当前步骤的信息和high-level plan
-            主要用于当前步骤内部agent之间的信息传递，避免重复显示历史信息。
+        outside: bool, default True
+            Whether to include historical step summaries.
+            - True: Full output, including "Previous Steps Summary" section (showing previous max_steps historical steps)
+            - False: Exclude historical step summaries; only show current step info and high-level plan
+            Mainly used for passing information between agents within the current step, avoiding duplicate historical info.
             
-        only_high_level_plan: bool, 默认False
-            是否只返回high-level plan信息。
-            - True: 仅返回"High-Level Plan"部分，忽略当前步骤进度和历史总结
-            - False: 返回完整的memory信息（根据outside参数决定是否包含历史）
-            适用于只需要规划信息的场景，可以大幅减少prompt长度。
+        only_high_level_plan: bool, default False
+            Whether to only return high-level plan information.
+            - True: Only return "High-Level Plan" section, ignoring current step progress and historical summaries
+            - False: Return complete memory info (historical summaries included depending on outside parameter)
+            Suitable for scenarios where only planning information is needed, significantly reducing prompt length.
     
     Returns:
-        str: 格式化的memory信息字符串，包含以下部分（根据参数控制）：
-            1. High-Level Plan: 当前或上一步的任务规划列表（如果存在）
-            2. Current Step Progress: 当前步骤中各agent的执行情况（仅当only_high_level_plan=False时）
-            3. Previous Steps Summary: 历史步骤总结（仅当outside=True且only_high_level_plan=False时）
+        str: Formatted memory information string containing the following sections (controlled by arguments):
+            1. High-Level Plan: Task planning list from current or previous step (if present)
+            2. Current Step Progress: Execution status of agents in current step (only when only_high_level_plan=False)
+            3. Previous Steps Summary: Historical step summaries (only when outside=True and only_high_level_plan=False)
             
-        如果没有可用信息，返回相应的提示信息。
+        If no available info, returns corresponding prompt message.
     """
     if 'scene' not in step or step['scene'] is None:
         return "No scene information available for memory retrieval.\n"
@@ -977,14 +977,14 @@ def format_memory_info(step, max_steps=50, outside=True, only_high_level_plan=Fa
         current_step = step.get('current_step', 0)
         question = step.get('question', '')
 
-        # 定义agent执行顺序
+        # Define agent execution order
         # agent_execution_order = ["frontier_manager", "snapshot_manager", "answerer", "planner", "forced_answerer"]
         agent_execution_order = ["snapshot_manager", "frontier_manager", "answerer", "planner", "forced_answerer"]
 
-        # 1. 检索预生成的step总结（对于之前的steps和当前step如果已有）
+        # 1. Retrieve pre-generated step summaries (for previous steps and current step if available)
         step_summaries = {}
         try:
-            # 优化：一次检索所有需要的step_summary_output，减少多次调用
+            # Optimization: retrieve all needed step_summary_outputs at once to reduce repeated calls
             summary_outputs = step['scene'].long_term_memory.retrieve_by_type("step_summary_output", top_k=50)
             if summary_outputs:
                 for output in summary_outputs:
@@ -995,13 +995,13 @@ def format_memory_info(step, max_steps=50, outside=True, only_high_level_plan=Fa
         except Exception as e:
             logging.warning(f"Error retrieving step summaries: {e}")
 
-        # 2. 检索high-level planner的输出
+        # 2. Retrieve high-level planner output
         high_level_plan_info = None
         try:
-            # 首先检查当前step是否有high-level plan
+            # First check if current step has high-level plan
             current_planner_outputs = step['scene'].long_term_memory.retrieve_by_step_and_type(current_step, "high_level_planner_output")
             if current_planner_outputs:
-                # 使用最新的high-level plan
+                # Use latest high-level plan
                 latest_planner_output = current_planner_outputs[-1]
                 if (latest_planner_output.structured_decision and
                     'todo_list' in latest_planner_output.structured_decision):
@@ -1011,11 +1011,11 @@ def format_memory_info(step, max_steps=50, outside=True, only_high_level_plan=Fa
                         'raw_output': latest_planner_output.structured_decision.get('raw_response', '')
                     }
             else:
-                # 如果当前step没有，检查上一个step
+                # If current step has none, check previous step
                 if current_step > 0:
                     previous_planner_outputs = step['scene'].long_term_memory.retrieve_by_step_and_type(current_step - 1, "high_level_planner_output")
                     if previous_planner_outputs:
-                        # 使用上一个step的最新high-level plan
+                        # Use latest high-level plan from previous step
                         latest_planner_output = previous_planner_outputs[-1]
                         if (latest_planner_output.structured_decision and
                             'todo_list' in latest_planner_output.structured_decision):
@@ -1027,26 +1027,26 @@ def format_memory_info(step, max_steps=50, outside=True, only_high_level_plan=Fa
         except Exception as e:
             logging.warning(f"Error retrieving high-level planner info: {e}")
 
-        # 3. 优化：使用专门的函数检索当前step的所有agent输出
+        # 3. Optimization: use dedicated function to retrieve all agent outputs for current step
         current_step_agents = {}
         try:
-            # 使用优化的记忆检索函数
+            # Use optimized memory retrieval function
             agent_outputs_by_type = get_agent_outputs_by_step_and_type(step, current_step, agent_execution_order)
             
-            # 将每个agent类型的最新输出添加到current_step_agents
+            # Add latest output of each agent type to current_step_agents
             for agent_type in agent_execution_order:
                 if agent_type in agent_outputs_by_type and agent_outputs_by_type[agent_type]:
-                    # 使用最新的输出
+                    # Use latest output
                     latest_output = agent_outputs_by_type[agent_type][-1]
                     current_step_agents[agent_type] = latest_output
         except Exception as e:
             logging.warning(f"Error retrieving current step agents: {e}")
 
-        # 4. 格式化输出 - 优化信息组织，使最重要的信息更突出
+        # 4. Format output - optimize information structure to highlight most important info
         if not step_summaries and not current_step_agents and not high_level_plan_info:
             return "No memory available.\n"
 
-        # 优先显示high-level plan信息，如果存在
+        # Prioritize showing high-level plan info, if present
         if high_level_plan_info:
             memory_info.append("High-Level Plan:\n")
             memory_info.append(f"- Plan from Step {high_level_plan_info['step']}:\n")
@@ -1056,14 +1056,14 @@ def format_memory_info(step, max_steps=50, outside=True, only_high_level_plan=Fa
                 memory_info.append(f" * [{status}] {task_desc}\n")
             memory_info.append("\n")
         
-        # 如果只需要high-level plan信息，直接返回
+        # If only high-level plan info is needed, return directly
         if only_high_level_plan:
             if high_level_plan_info:
                 return "".join(memory_info)
             else:
                 return "No high-level plan available.\n"
 
-        # 然后显示当前step的agent信息，因为这是最相关的
+        # Then show current step agent info, as it is most relevant
         if current_step_agents:
             memory_info.append("Current Step Progress:\n")
             for agent_type in agent_execution_order:
@@ -1073,7 +1073,7 @@ def format_memory_info(step, max_steps=50, outside=True, only_high_level_plan=Fa
                     memory_info.append(f"- {agent_name}: {agent_info['content']}\n")
             memory_info.append("\n")
 
-        # 然后显示之前的steps（使用预生成总结）
+        # Then show previous steps (using pre-generated summaries)
         if outside:
             memory_info.append("Previous Steps Summary:\n")
             previous_steps = sorted([s for s in step_summaries.keys() if s < current_step], reverse=True)
@@ -1328,7 +1328,7 @@ def explore_step(step, cfg, verbose=False):
                     
                     actual_step = step.get('current_step', 0)
                     
-                    # 记录结构化输出，这会自动处理内部逻辑
+                    # Record structured output; this automatically handles internal logic
                     step['scene'].text_memory_system.record_structured_agent_output(
                         step=actual_step,
                         agent_type="answerer",
@@ -1471,7 +1471,7 @@ def explore_step(step, cfg, verbose=False):
                 for i, line in enumerate(lines):
                     line_lower = line.lower()
                     if 'next step: frontier' in line_lower:
-                        # 提取frontier后的数字
+                        # Extract number after frontier
                         frontier_match = re.search(r'frontier\s+(\d+)', line_lower)
                         if frontier_match:
                             response = f"frontier {frontier_match.group(1)}"
@@ -1486,7 +1486,7 @@ def explore_step(step, cfg, verbose=False):
                 
                 if not found_response:
                     response = "stop exploration"
-                    reason = full_response  # 或记录错误
+                    reason = full_response  # Or record error
 
             response = response.lower().strip()
 
@@ -1520,7 +1520,7 @@ def explore_step(step, cfg, verbose=False):
                     if all_planner_outputs and len(all_planner_outputs) > 1:  
                         logging.info(f"Planner History (All Steps):")
                         for output in all_planner_outputs[-5:]: 
-                            logging.info(f"  - Step {output.step}: {output.content[:100]}...")  # 限制长度
+                            logging.info(f"  - Step {output.step}: {output.content[:100]}...")  # Limit length
                     
                     logging.info(f"=== End Planner Update ===")
             except Exception as e:
@@ -1535,14 +1535,14 @@ def explore_step(step, cfg, verbose=False):
                 actual_step = step.get('current_step', 0)
                 question = step.get('question', '')
 
-                # 检查是否已经记录过这个step的总结，避免重复记录
+                # Check if summary for this step is already recorded to prevent duplicates
                 existing_summaries = step['scene'].long_term_memory.retrieve_by_type("step_summary_output", top_k=10)
                 already_recorded = any(output.step == actual_step for output in existing_summaries)
 
                 if already_recorded:
                     logging.info(f"Step {actual_step} summary already recorded, skipping...")
                 else:
-                    # 收集当前step所有agent的输出
+                    # Collect outputs of all agents for current step
                     step_agents = []
                     # agent_execution_order = ["frontier_manager", "snapshot_manager", "answerer", "planner", "forced_answerer"]
                     agent_execution_order = ["snapshot_manager", "frontier_manager", "answerer", "planner", "forced_answerer"]
@@ -1550,7 +1550,7 @@ def explore_step(step, cfg, verbose=False):
                     try:
                         agent_outputs_by_type = get_agent_outputs_by_step_and_type(step, actual_step, agent_execution_order)
                         
-                        # 将所有agent的输出添加到step_agents列表
+                        # Add all agent outputs to step_agents list
                         for agent_type in agent_execution_order:
                             if agent_type in agent_outputs_by_type:
                                 for output in agent_outputs_by_type[agent_type]:
@@ -1564,11 +1564,11 @@ def explore_step(step, cfg, verbose=False):
                     if step_agents:
                         logging.info(f"Generating step summary for step {actual_step} with {len(step_agents)} agent outputs")
 
-                        # 生成step总结
+                        # Generate step summary
                         step_summary = generate_step_summary(actual_step, step_agents, question)
 
-                        if step_summary and len(step_summary.strip()) > 10:  # 确保总结不为空且有意义
-                            # 记录到长期记忆
+                        if step_summary and len(step_summary.strip()) > 10:  # Ensure summary is non-empty and meaningful
+                            # Record to long-term memory
                             structured_output = {
                                 "raw_response": step_summary,
                                 "reasoning": step_summary,

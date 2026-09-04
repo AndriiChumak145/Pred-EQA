@@ -8,7 +8,7 @@ os.environ["HABITAT_SIM_LOG"] = (
 os.environ["MAGNUM_LOG"] = "quiet"
 os.environ["MPLBACKEND"] = "Agg"
 import matplotlib
-matplotlib.use('Agg')  # 确保使用非交互式后端
+matplotlib.use('Agg')  # Ensure non-interactive backend is used
 
 
 import argparse

@@ -141,10 +141,10 @@ class Logger:
         self.pts_voxels = np.empty((0, 2))
         self.explore_dist = 0
         
-        # 添加：用于记录轨迹和frontier选择，以计算动作一致性指标
+        # Added: used to record trajectory and frontier selections to calculate action consistency metrics
         self.trajectory_positions = []
         self.frontier_choices = []
-        self.frontier_positions = []  # 记录每步选择的frontier的位置
+        self.frontier_positions = []  # Record position of selected frontier at each step
 
     def save_results(self):
         # sanity check
@@ -323,9 +323,9 @@ class Logger:
 
         self.n_total += 1
         
-        # 添加：保存轨迹和frontier选择信息到文件（用于计算动作一致性指标）
+        # Added: save trajectory and frontier selection info to file (used to calculate action consistency metrics)
         if self.episode_dir is not None:
-            # 保存轨迹数据
+            # Save trajectory data
             if hasattr(self, 'trajectory_positions') and len(self.trajectory_positions) > 0:
                 trajectory_data = {
                     "positions": self.trajectory_positions,
@@ -337,7 +337,7 @@ class Logger:
                 with open(trajectory_path, 'w') as f:
                     json.dump(trajectory_data, f, indent=4)
             
-            # 保存frontier选择数据
+            # Save frontier selection data
             if hasattr(self, 'frontier_choices') and len(self.frontier_choices) > 0:
                 frontier_data = {
                     "choices": self.frontier_choices,
@@ -377,7 +377,7 @@ class Logger:
 
         self.explore_dist = 0
         
-        # 添加：初始化轨迹记录
+        # Added: initialize trajectory recording
         self.trajectory_positions = [init_pts_voxel.tolist()]
         self.frontier_choices = []
         self.frontier_positions = []
@@ -395,17 +395,17 @@ class Logger:
             np.linalg.norm(self.pts_voxels[-1] - self.pts_voxels[-2]) * self.voxel_size
         )
         
-        # 添加：记录当前位置到轨迹
+        # Added: record current position to trajectory
         if hasattr(self, 'trajectory_positions'):
             self.trajectory_positions.append(pts_voxel.tolist())
 
     def log_frontier_choice(self, frontier_id, frontier_position=None):
         """
-        记录选择的frontier
+        Record selected frontier.
         
         Args:
-            frontier_id: frontier的标识符（如图片名称）
-            frontier_position: frontier的位置坐标（可选）
+            frontier_id: Identifier of frontier (e.g. image name)
+            frontier_position: Position coordinates of frontier (optional)
         """
         if not hasattr(self, 'frontier_choices'):
             self.frontier_choices = []
@@ -420,24 +420,24 @@ class Logger:
         visualization_path = os.path.join(self.episode_dir, "visualization")
         os.makedirs(visualization_path, exist_ok=True)
 
-        # 检查fig是否为None，如果是则跳过可视化保存
+        # Check if fig is None; if so, skip saving visualization
         if fig is None:
             logging.warning(f"Visualization figure is None for step {cnt_step}, skipping save")
             return
 
-        # 获取matplotlib图中的轴 - 保持与原代码一致的处理方式
+        # Get axes in matplotlib figure - keep consistent handling with original code
         if not hasattr(fig, 'axes') or len(fig.axes) == 0:
             logging.warning(f"Figure has no axes for step {cnt_step}, skipping save")
             return
 
         ax1 = fig.axes[0]
         
-        # 绘制探索路径 - 只画到当前位置，不画到下一步计划位置
-        # pts_voxels[-1] 是下一步计划去的位置（还没到达）
-        # pts_voxels[-2] 是当前实际位置（已到达）
-        # 所以轨迹只画到倒数第二个点
+        # Draw exploration path - only up to current position, not to next planned position
+        # pts_voxels[-1] is the next planned position (not reached yet)
+        # pts_voxels[-2] is the current actual position (already reached)
+        # Therefore the trajectory is only drawn up to the second to last point
         if len(self.pts_voxels) > 1:
-            # 只绘制到当前位置的路径（不包含最后一个点，因为那是计划去的位置）
+            # Only draw path up to current position (excluding last point because it is the planned destination)
             current_pts = self.pts_voxels[:-1] if len(self.pts_voxels) > 1 else self.pts_voxels
             
             if len(current_pts) > 1:
@@ -450,7 +450,7 @@ class Logger:
                     label="Exploration Path"
                 )
             
-            # 标记起始点
+            # Mark starting point
             ax1.scatter(
                 self.pts_voxels[0, 1],
                 self.pts_voxels[0, 0],
@@ -461,33 +461,32 @@ class Logger:
                 zorder=5
             )
             
-            # 注意：当前位置的标记已经在agent_step的fig中绘制了（青蓝色圆圈）
-            # 这里不需要重复标记
+            # Note: The marker for the current position is already drawn in agent_step's fig (cyan circle)
+            # No need to mark it again here
             
-            # 如果有多个路径点，标记一些中间路径点以显示探索进度
-            if len(current_pts) > 2:
-                # 每隔几个点标记一个，避免过于密集
-                step_size = max(1, len(current_pts) // 10)  # 最多标记10个中间点
-                for i in range(0, len(current_pts), step_size):
-                    if i != 0 and i != len(current_pts) - 1:  # 跳过起始点和终点
-                        ax1.scatter(
-                            current_pts[i, 1],
-                            current_pts[i, 0],
-                            color="orange",
-                            s=30,
-                            marker='.',
-                            alpha=0.6
-                        )
+            # If there are multiple waypoints, mark some intermediate points to show exploration progress
+            # Mark one point every few steps to avoid clutter
+            step_size = max(1, len(current_pts) // 10)  # Mark at most 10 intermediate points
+            for i in range(0, len(current_pts), step_size):
+                if i != 0 and i != len(current_pts) - 1:  # Skip start and end points
+                    ax1.scatter(
+                        current_pts[i, 1],
+                        current_pts[i, 0],
+                        color="orange",
+                        s=30,
+                        marker='.',
+                        alpha=0.6
+                    )
 
-        # 注意：frontier的紫色箭头已经在agent_step中的fig上绘制过了
-        # 这里不需要重复绘制，避免箭头重叠
-        # 只需要添加图例说明即可
+        # Note: The purple arrow for the frontier is already drawn on the fig in agent_step
+        # No need to redraw here to avoid overlapping arrows
+        # Just need to add the legend label
         if tsdf_planner is not None:
-            # 不再重复绘制frontiers和箭头，因为agent_step中已经绘制
-            # 只在必要时添加特殊标记
+            # Do not redraw frontiers and arrows since they are already drawn in agent_step
+            # Only add special markers when necessary
             pass
 
-        # 添加标题和图例
+        # Add title and legend
         ax1.set_title(f"Exploration Map - Step {cnt_step}")
         ax1.legend(loc='upper right', bbox_to_anchor=(1, 1))
         

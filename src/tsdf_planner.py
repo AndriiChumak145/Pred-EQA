@@ -3,7 +3,7 @@ import os.path
 
 import numpy as np
 import matplotlib
-# 确保使用非交互式后端
+# Ensure non-interactive backend is used
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from skimage import measure
@@ -25,7 +25,7 @@ from src.tsdf_base import TSDFPlannerBase
 from src.conceptgraph.slam.slam_classes import MapObjectDict
 from src.utils import resize_image
 
-import logging  # 添加logging导入
+import logging  # Add logging import
 
 
 @dataclass
@@ -484,7 +484,7 @@ class TSDFPlanner(TSDFPlannerBase):
                 # Use the observation point as the snapshot position when no objects are clustered
                 snapshot_center = choice.obs_point[:2]
                 choice.position = snapshot_center
-                obj_centers = np.array([snapshot_center])  # TODO 11.11 为空cluster情况初始化obj_centers
+                obj_centers = np.array([snapshot_center])  # TODO 11.11 Initialize obj_centers for empty cluster case
             else:
                 obj_centers = [objects[obj_id]["bbox"].center for obj_id in choice.cluster]
                 obj_centers = [self.habitat2voxel(center)[:2] for center in obj_centers]
@@ -579,7 +579,7 @@ class TSDFPlanner(TSDFPlannerBase):
             # find the direction into unexplored
             if type(self.max_point) != Frontier:
                 logging.error("Error: max_point is not a Frontier object, has no orientation attribute")
-                return False  # 返回False而不是(None,)
+                return False  # Return False instead of (None,)
             ft_direction = self.max_point.orientation
 
             # find an unoccupied point between the agent and the frontier
@@ -743,7 +743,7 @@ class TSDFPlanner(TSDFPlannerBase):
         # Plot
         fig = None
         if save_visualization:
-            # 确保只在需要时才创建图形
+            # Ensure figure is created only when needed
             try:
                 h, w = self._tsdf_vol_cpu.shape[:2]
                 h = 8 * h / w
@@ -806,9 +806,9 @@ class TSDFPlanner(TSDFPlannerBase):
                         for obj_id in snapshot.cluster
                     ]
                     
-                    # 检查obj_points是否为空，避免空数组导致的错误
+                    # Check if obj_points is empty to avoid errors from empty arrays
                     if len(obj_points) == 0:
-                        continue  # 跳过这个snapshot，因为它没有对象
+                        continue  # Skip this snapshot because it has no objects
                     
                     obj_center = np.mean(obj_points, axis=0)
                     view_direction = obj_center - obs_point
@@ -830,11 +830,11 @@ class TSDFPlanner(TSDFPlannerBase):
                             angle - 360 if angle > 180 else angle for angle in obj_angles
                         ]  # range from -180 to 180
 
-                    # 确保obj_points不为空再计算radius
+                    # Ensure obj_points is not empty before calculating radius
                     if len(obj_points) > 0:
                         radius = np.linalg.norm(obj_points - obs_point, axis=1).max()
                     else:
-                        continue  # 跳过这个snapshot，因为它没有有效的对象点
+                        continue  # Skip this snapshot because it has no valid object points
                     wedge = Wedge(
                         center=(obs_point[1], obs_point[0]),
                         r=radius,
@@ -863,14 +863,14 @@ class TSDFPlanner(TSDFPlannerBase):
 
                     ax1.add_patch(wedge)
 
-                    # 只有当snapshot.cluster不为空时才绘制对象点
+                    # Plot object points only when snapshot.cluster is not empty
                     if len(snapshot.cluster) > 0:
                         for obj_id in snapshot.cluster:
                             obj_vox = self.habitat2voxel(objects[obj_id]["bbox"].center)
                             ax1.scatter(obj_vox[1], obj_vox[0], color=snapshot.color, s=30)
 
                 if type(self.max_point) == SnapShot:
-                    # 只有当max_point.cluster不为空时才绘制对象点
+                    # Plot object points only when max_point.cluster is not empty
                     if len(self.max_point.cluster) > 0:
                         for obj_id in self.max_point.cluster:
                             obj_vox = self.habitat2voxel(objects[obj_id]["bbox"].center)
@@ -914,7 +914,7 @@ class TSDFPlanner(TSDFPlannerBase):
                         ax1.add_patch(arrow)
             except Exception as e:
                 logging.warning(f"Failed to create visualization: {e}")
-                fig = None # 如果绘图失败，将fig设为None
+                fig = None  # If plotting fails, set fig to None
             
 
         # Convert back to world coordinates

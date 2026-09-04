@@ -3,30 +3,30 @@ from typing import List, Dict, Optional
 
 def extract_predictive_plan(planner_output: str) -> Optional[List[Dict[str, str]]]:
     """
-    从high-level planner的输出中提取plan信息
+    Extract plan information from high-level planner output.
     
     Args:
-        planner_output: high-level planner的完整输出字符串
+        planner_output: Full output string from high-level planner
         
     Returns:
-        List[Dict[str, str]]: 包含任务信息的字典列表，每个字典包含'task'和'status'键
-        如果未找到plan则返回None
+        List[Dict[str, str]]: List of dictionaries containing task info, each with 'task' and 'status' keys.
+        Returns None if no plan was found.
     """
     if not planner_output or not isinstance(planner_output, str):
         return None
     
-    # 定义匹配XML格式todo list的正则表达式
-    # 匹配 <update_todo_list><todos>...内容...</todos></update_todo_list>
+    # Define regular expression matching XML-format todo list
+    # Matches <update_todo_list><todos>...content...</todos></update_todo_list>
     pattern = r'<update_todo_list>\s*<todos>(.*?)</todos>\s*</update_todo_list>'
     match = re.search(pattern, planner_output, re.DOTALL)
     
     if not match:
-        # 如果没有找到XML格式，尝试直接匹配任务格式
+        # If XML format is not found, try matching task format directly
         return extract_todo_list_from_text(planner_output)
     
     todos_content = match.group(1)
     
-    # 提取每行任务，格式为 [状态] 任务描述
+    # Extract each line of task, format: [status] task description
     todo_items = []
     lines = todos_content.strip().split('\n')
     
@@ -35,13 +35,13 @@ def extract_predictive_plan(planner_output: str) -> Optional[List[Dict[str, str]
         if not line:
             continue
             
-        # 匹配 [ ] 或 [-] 或 [x] 开头的任务
+        # Match tasks starting with [ ], [-], or [x]
         task_match = re.match(r'^(\[[ x-]\])\s*(.+)$', line)
         if task_match:
             status = task_match.group(1).strip()
             task_description = task_match.group(2).strip()
             
-            # 标准化状态表示
+            # Standardize status representation
             if status == '[ ]':
                 standardized_status = 'pending'
             elif status == '[-]':
@@ -51,7 +51,7 @@ def extract_predictive_plan(planner_output: str) -> Optional[List[Dict[str, str]
             else:
                 standardized_status = 'unknown'
                 
-            if task_description:  # 只添加有描述的任务
+            if task_description:  # Only add tasks that have a description
                 todo_items.append({
                     'task': task_description,
                     'status': standardized_status
@@ -62,21 +62,21 @@ def extract_predictive_plan(planner_output: str) -> Optional[List[Dict[str, str]
 
 def extract_todo_list_from_text(text: str) -> Optional[List[Dict[str, str]]]:
     """
-    从纯文本中直接提取todo list格式的任务
+    Directly extract tasks in todo list format from plain text.
     
     Args:
-        text: 包含todo list的文本
+        text: Text containing todo list
         
     Returns:
-        List[Dict[str, str]]: 包含任务信息的字典列表
+        List[Dict[str, str]]: List of dictionaries containing task info
     """
     if not text or not isinstance(text, str):
         return None
     
-    # 匹配 [ ] 或 [-] 或 [x] 开头的任务，跨多行
+    # Match tasks starting with [ ], [-], or [x], across multiple lines
     todo_items = []
     
-    # 按行分割文本
+    # Split text by line
     lines = text.split('\n')
     
     for line in lines:
@@ -84,13 +84,13 @@ def extract_todo_list_from_text(text: str) -> Optional[List[Dict[str, str]]]:
         if not line:
             continue
             
-        # 匹配 [状态] 任务描述格式
+        # Match [status] task description format
         task_match = re.match(r'^(\[[ x-]\])\s*(.+)$', line)
         if task_match:
             status = task_match.group(1).strip()
             task_description = task_match.group(2).strip()
             
-            # 标准化状态表示
+            # Standardize status representation
             if status == '[ ]':
                 standardized_status = 'pending'
             elif status == '[-]':
@@ -100,7 +100,7 @@ def extract_todo_list_from_text(text: str) -> Optional[List[Dict[str, str]]]:
             else:
                 standardized_status = 'unknown'
                 
-            if task_description:  # 只添加有描述的任务
+            if task_description:  # Only add tasks that have a description
                 todo_items.append({
                     'task': task_description,
                     'status': standardized_status

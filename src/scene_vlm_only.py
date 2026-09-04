@@ -143,7 +143,7 @@ class Scene:
         logging.info("Initialized Simplified VLM Scene - images go directly to VLM")
 
     def close(self):
-        """显式关闭模拟器资源"""
+        """Explicitly close simulator resources."""
         try:
             if hasattr(self, 'simulator') and self.simulator is not None:
                 self.simulator.close()
