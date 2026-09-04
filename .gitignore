@@ -54,10 +54,8 @@ checkpoints/
 *.tar.gz
 huggingface/
 
+# Media & Videos
 videos/
-videos_gradcam/
-videos_3dgs/
-videos_2d_gradcam/
-videos_comparisons/
-videos_concept_ranking/
+
+# Temporary
 tmp/

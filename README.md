@@ -237,24 +237,95 @@ results/Pred-EQA/
 * **`path_length_list.pkl`, `success_list.pkl`, `fail_list_*.pkl`**: Pickled Python lists storing per-episode trajectory lengths and success flags for immediate statistical processing by `get-scores.py`.
 * **`log_*.log`**: Complete execution logs recording every VLM prompt, generated XML to-do checklist (`<update_todo_list>`), pruned frontiers (`"Retain Frontiers: ..."`), and agent reasoning outputs across all steps.
 
-## Repository Structure
+## Architecture & Directory Structure
+
+Pred-EQA is organized into modular directories separating core framework code, documentation, operational scripts, execution environments, centralized logs, evaluation deliverables, and media outputs. The root level is strictly minimal and clean, containing only canonical upstream entry points and top-level directory roots.
 
 ```
-run_aeqa_evaluation_vlm_only.py          # A-EQA exploration + answering pipeline
-run_express_bench_evaluation_vlm_only.py # Express-Bench pipeline
-evaluate-predictions.py / get-scores.py  # A-EQA LLM-Match / LLM-SPL scoring
-evaluate_express_bench.py / get_scores_express_bench.py  # Express-Bench scoring
-src/
-  pred_eqa.py            # Predictive planning loop + VLM client (port 22002)
-  scene_vlm_only.py      # Pure-VLM scene / snapshot management
-  long_term_memory.py    # Textual structural memory
-  scene_integration.py   # Memory integration
-  tsdf_planner.py        # TSDF-based frontier extraction & planning
-  query_vlm.py           # Per-step VLM querying
-cfg/                     # Evaluation configs
-data/                    # Question files, GT path lengths, baseline metrics
-prompts/                 # Agent / evaluation prompts
-openeqa/                 # OpenEQA LLM-match evaluation utilities
+Pred-EQA/
+├── src/                                  # Core framework implementation
+│   ├── pred_eqa.py                       # Predictive planning loop & VLM client interface
+│   ├── tsdf_planner.py                   # 3D TSDF voxel mapping & geometric frontier extraction
+│   ├── tsdf_base.py                      # Vectorized TSDF voxel raymarching & occupancy checks
+│   ├── scene_vlm_only.py                 # Pure-VLM visual evidence memory & snapshot curation
+│   ├── long_term_memory.py               # Textual structural memory & hierarchical state
+│   ├── scene_integration.py              # Visual-textual memory consolidation & synchronization
+│   ├── query_vlm.py                      # Per-step VLM prompt construction & response parsing
+│   ├── geom.py                           # Geometric projections, camera intrinsics & coordinate transforms
+│   └── habitat.py                        # Habitat-Sim environment integration & agent actuation
+│
+├── docs/                                 # Centralized documentation & experiment reports (see docs/README.md)
+│   ├── README.md                         # Documentation catalog & navigation matrix
+│   ├── decisions.md                      # Architectural Decision Records (ADR-001 to ADR-005)
+│   ├── findings.md                       # Empirical experiment logs & performance benchmarks
+│   ├── claims_and_evidence.md            # Empirical validation audits & reproduction proofs
+│   ├── evaluation_results.md             # Benchmark evaluation metrics & baseline comparisons
+│   ├── pred_eqa_pipeline_and_ep0.md      # Comprehensive math walkthrough & Episode 0 case study
+│   ├── reproduction_and_experiment_summary.md # Setup instructions & tmux batch replication guide
+│   ├── installation_summary.md           # Python 3.11 / CUDA 12.8 installation & dependency fixes
+│   └── paper_comparison.md               # CVPR 2026 paper component correspondence audit
+│
+├── scripts/                              # Operational scripts, runners & endpoints
+│   ├── pipelines/                        # End-to-end evaluation & tmux orchestrators
+│   │   ├── start_pred_eqa_pipeline.sh    # Full pipeline launcher
+│   │   ├── run_gemini_ep0_eval.sh        # Gemini-assisted Episode 0 evaluation runner
+│   │   ├── run_gemini_failures.sh        # Failure-case targeted evaluation runner
+│   │   ├── run_qwen8b_eval.sh            # Qwen-8B judge scoring runner
+│   │   └── start_gemini_failures_tmux.sh # Background tmux orchestration runner
+│   ├── servers/                          # Model serving endpoints
+│   │   ├── llm_native_server.py          # Universal LLM/VLM FastAPI serving endpoint
+│   │   └── qwen_native_server.py         # Specialized Qwen-8B-Instruct local server
+│   ├── eval/                             # Evaluation & analytical scripts
+│   │   ├── evaluate_gemini_ep0_qwen16bit.py
+│   │   ├── evaluate_gemini_failures_qwen16bit.py
+│   │   ├── evaluate_qwen_1669_qwen16bit.py
+│   │   ├── fill_blank_answers_and_evaluate.py
+│   │   ├── compile_pred_eqa_results.py
+│   │   ├── compute_10run_variance_metrics.py
+│   │   ├── create_pred_eqa_200_subset.py
+│   │   └── parse_and_append_eval_scores.py
+│   └── tools/                            # Media generation & testing utilities
+│       ├── generate_episode_video.py     # Multi-panel episode video compiler
+│       └── test_gemini_vlm_connection.py # API connectivity diagnostic tool
+│
+├── envs/                                 # Conda environment specifications
+│   ├── base_conda_list.txt               # Base environment package manifest
+│   └── conda_list.txt                    # Active pred-eqa environment package manifest
+│
+├── logs/                                 # Centralized execution & server logs
+│   ├── pred_eqa_200_episodes.log         # 200-episode benchmark evaluation log
+│   ├── pred_eqa_12_episodes.log          # 12-episode validation log
+│   ├── pred_eqa_10_episodes.log          # 10-episode trial log
+│   ├── pred_eqa_gemini_failures.log      # Gemini failure-case analysis log
+│   ├── pred_eqa_tmux_batch.log           # Tmux batch runner log
+│   ├── gemini_1006.log                   # Gemini 1006 evaluation run log
+│   └── qwen_server.log                   # Local Qwen server operational log
+│
+├── videos/                               # Consolidated media tree
+│   ├── baseline/                         # Baseline episode video renders
+│   ├── gradcam/                          # 3D TSDF Grad-CAM saliency visualizations
+│   ├── 2d_gradcam/                       # 2D feature saliency visualizations
+│   ├── 3dgs/                             # 3D Gaussian Splatting rendered visualizations
+│   ├── comparisons/                      # Multi-method comparison video deliverables
+│   ├── concept_ranking/                  # Concept memory ranked replay videos
+│   ├── concept_ranking_progressive_reveal/ # Progressive concept revelation videos
+│   └── concept_ranking_with_metrics/     # Metric-annotated concept ranking videos
+│
+├── results/                              # Output evaluation trajectories, snapshots & answer jsons
+├── cfg/                                  # Benchmark & evaluation YAML configurations
+├── data/                                 # Benchmark questions, GT path lengths & class definitions
+├── prompts/                              # Agent system prompts & XML formatting templates
+├── openeqa/                              # OpenEQA benchmark evaluation module
+│
+└── [Canonical Root Evaluation Scripts]   # Preserved at root for upstream fidelity
+    ├── run_aeqa_evaluation_vlm_only.py
+    ├── run_express_bench_evaluation_vlm_only.py
+    ├── evaluate-predictions.py
+    ├── evaluate_blind_llm_answers.py
+    ├── evaluate_express_bench.py
+    ├── get-scores.py
+    ├── get_scores_express_bench.py
+    └── calculate_action_consistency_metrics.py
 ```
 
 ## Acknowledgement

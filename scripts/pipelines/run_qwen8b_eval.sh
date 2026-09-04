@@ -9,10 +9,15 @@ export QWEN_THINKING=0
 export USE_LOCAL_GEMMA=0
 export USE_LOCAL_VLLM=0
 
-cd /home/dani/concept-scenesplat/EXPRESS-Bench
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+PROJECT_DIR="${PROJECT_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+WORKSPACE_ROOT="$(cd "$PROJECT_DIR/.." && pwd)"
+
+cd "$WORKSPACE_ROOT/EXPRESS-Bench"
 python3 eval_all_2044.py \
-    --input_file /home/dani/concept-scenesplat/Pred-EQA/results/pred_eqa_200_results.pkl \
-    --output_file /home/dani/concept-scenesplat/Pred-EQA/results/pred_eqa_200_qwen8b_scores.pkl \
+    --input_file "$PROJECT_DIR/results/pred_eqa_200_results.pkl" \
+    --output_file "$PROJECT_DIR/results/pred_eqa_200_qwen8b_scores.pkl" \
     --episodes_per_batch 250 \
     --num_evals_per_episode 10 \
     --qwen_model "Qwen/Qwen3-VL-8B-Instruct"

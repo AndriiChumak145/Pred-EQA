@@ -6,10 +6,33 @@ import os
 import random
 import re
 import shutil
+import sys
+from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+# Dynamically resolve REPO_ROOT (Pred-EQA) and WORKSPACE_ROOT (concept-scenesplat)
+REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE_ROOT = REPO_ROOT.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+def resolve_path(p: str) -> str:
+    """Resolve a path against cwd, WORKSPACE_ROOT, or REPO_ROOT."""
+    if not p:
+        return p
+    if os.path.exists(p):
+        return p
+    ws_candidate = WORKSPACE_ROOT / p
+    if ws_candidate.exists():
+        return str(ws_candidate)
+    if p.startswith("Pred-EQA/"):
+        repo_candidate = REPO_ROOT / p[len("Pred-EQA/"):]
+        if repo_candidate.exists():
+            return str(repo_candidate)
+    return p
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,7 +52,7 @@ MAX_OBSERVATION_CHAR_LEN = -1     # Maximum character length of observation text
 
 def load_express_bench_metadata():
     """Load questions and GT answers from express-bench.json."""
-    dataset_path = "Pred-EQA/data/express-bench.json"
+    dataset_path = resolve_path("Pred-EQA/data/express-bench.json")
     if not os.path.exists(dataset_path):
         return {}
     with open(dataset_path, "r", encoding="utf-8") as f:
@@ -39,8 +62,11 @@ def load_express_bench_metadata():
 def load_model_answers(results_root="Pred-EQA/results/Pred-EQA"):
     """Load model answers from gpt_answer files."""
     answers = {}
+    resolved_root = resolve_path(results_root)
     answer_files = sorted(set(
-        glob.glob(f"{results_root}/gpt_answer*.json") + 
+        glob.glob(f"{resolved_root}/gpt_answer*.json") + 
+        glob.glob(str(REPO_ROOT / "results/**/gpt_answer*.json")) + 
+        glob.glob(str(REPO_ROOT / "gpt_answer*.json")) +
         glob.glob("Pred-EQA/results/**/gpt_answer*.json") + 
         glob.glob("Pred-EQA/gpt_answer*.json")
     ))
@@ -66,8 +92,15 @@ def parse_episode_plans(episode_id, results_root="Pred-EQA/results/Pred-EQA"):
     step_reasons = {}
     step_observations = {}
     
-    # Search results directory log files first, then fallback to root log files
-    log_files = sorted(glob.glob(f"{results_root}/log_*.log")) + sorted(glob.glob("Pred-EQA/*.log"))
+    resolved_root = resolve_path(results_root)
+    # Search results directory log files first, then fallback to centralized logs and root log files
+    log_files = sorted(set(
+        glob.glob(f"{resolved_root}/log_*.log")
+        + glob.glob(str(REPO_ROOT / "logs" / "*.log"))
+        + glob.glob(str(REPO_ROOT / "*.log"))
+        + glob.glob("Pred-EQA/logs/*.log")
+        + glob.glob("Pred-EQA/*.log")
+    ))
     
     for log_file in log_files:
         with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
@@ -91,7 +124,7 @@ def parse_episode_plans(episode_id, results_root="Pred-EQA/results/Pred-EQA"):
                     if real_matches:
                         step_plans[step_num] = real_matches[-1]
                         
-                    res_matches = list(re.finditer(r'response:\s*(frontier|snapshot)\s*(\d+)', schunk, re.IGNORECASE))
+                    res_matches = list(re.finditer(r"Prediction:\s*(frontier|snapshot),\s*(\d+)", schunk, re.IGNORECASE))
                     if res_matches:
                         last_res = res_matches[-1]
                         chosen_actions[step_num] = {
@@ -200,9 +233,10 @@ def clean_rationale(text):
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     return " ".join(lines)
 
-def load_concept_ranking(episode_id, results_root="Pred-EQA/results/Pred-EQA", concept_method="3dgs_method_b"):
+def load_concept_ranking(episode_id, results_root="Pred-EQA/results/Pred-EQA", concept_dir_name="3dgs_method_b"):
     """Load step-by-step ranked concepts from concept_memory/ranked_concepts.json."""
-    json_path = f"{results_root}/{episode_id}/concept_memory/{concept_method}/ranked_concepts.json"
+    resolved_root = resolve_path(results_root)
+    json_path = f"{resolved_root}/{episode_id}/concept_memory/{concept_dir_name}/ranked_concepts.json"
     if os.path.exists(json_path):
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -210,7 +244,7 @@ def load_concept_ranking(episode_id, results_root="Pred-EQA/results/Pred-EQA", c
     
     return {}
 
-def draw_concept_panel(draw, step, concepts, panel_x, panel_w, canvas_h, font_title, font_text, font_small):
+def draw_concept_panel(draw, step, concepts, panel_x, panel_w, canvas_h, font_title, font_text, font_small, rank_by="peak", hide_metrics=False):
     """Render the Ranked Concept Memory column."""
     # Background
     draw.rectangle([panel_x, 0, panel_x + panel_w, canvas_h], fill=(14, 18, 25))
@@ -220,7 +254,17 @@ def draw_concept_panel(draw, step, concepts, panel_x, panel_w, canvas_h, font_ti
     # Header Banner
     draw.rectangle([panel_x + 10, 15, panel_x + panel_w - 10, 80], fill=(24, 32, 45), outline=(50, 70, 95), width=1)
     draw.text((panel_x + 20, 25), "CONCEPT RANKING", fill=(0, 230, 255), font=font_title)
-    draw.text((panel_x + 20, 55), f"Step {step} Saliency", fill=(180, 200, 220), font=font_small)
+    if rank_by == "sem_text":
+        subtitle = f"Step {step} Sem-Text"
+    elif rank_by == "sem_text_metrics":
+        subtitle = f"Step {step} Sem-Text (Metrics)"
+    elif rank_by == "sem_visual":
+        subtitle = f"Step {step} Sem-Visual"
+    elif rank_by == "sem_visual_metrics":
+        subtitle = f"Step {step} Sem-Visual (Metrics)"
+    else:
+        subtitle = f"Step {step} Saliency"
+    draw.text((panel_x + 20, 55), subtitle, fill=(180, 200, 220), font=font_small)
     
     curr_y = 95
     card_x1 = panel_x + 10
@@ -280,7 +324,16 @@ def draw_concept_panel(draw, step, concepts, panel_x, panel_w, canvas_h, font_ti
         
         # Metrics
         metrics_y = curr_y + 32
-        stats_text = f"Pk: {peak:.2e} | Sim: {sim:.2f} | A: {area:.0f}%"
+        if "semantic_score" in item and item["semantic_score"] is not None:
+            if hide_metrics:
+                stats_text = f"Nav: {item['semantic_score']}/10"
+            else:
+                stats_text = f"Nav: {item['semantic_score']}/10 | Pk: {peak:.2e} | A: {area:.0f}%"
+        else:
+            if hide_metrics:
+                stats_text = ""
+            else:
+                stats_text = f"Pk: {peak:.2e} | Sim: {sim:.2f} | A: {area:.0f}%"
         draw.text((card_x1 + 45, metrics_y), stats_text, fill=(170, 190, 210), font=font_small)
         
         curr_y += card_h + 6
@@ -402,17 +455,30 @@ def draw_reasoning_panel(draw, step, plan_text, action_info, reason_text, obs_te
             draw.text((card_x1 + 15, content_y), rline, fill=(220, 230, 240), font=font_small)
             content_y += 18
 
-def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA", output_dir=None, show_reasoning=True, show_concepts=False, video_filename="video.mp4", concept_method="3dgs_method_b"):
+def create_episode_video(
+    episode_id="0",
+    results_root="Pred-EQA/results/Pred-EQA",
+    output_dir=None,
+    show_reasoning=True,
+    show_concepts=False,
+    video_filename="video.mp4",
+    concept_method="3dgs_method_b",
+    rank_by="peak",
+    videos_concept_root="Pred-EQA/videos/concept_ranking",
+):
+    results_root = resolve_path(results_root)
+    videos_concept_root = resolve_path(videos_concept_root)
     base_dir = f"{results_root}/{episode_id}"
     if not os.path.exists(base_dir):
         raise FileNotFoundError(f"Episode directory does not exist: {base_dir}")
     if not os.path.exists(f"{base_dir}/visualization"):
         raise FileNotFoundError(f"Visualization directory missing at: {base_dir}/visualization")
+    concept_dir_name = f"{concept_method}_{rank_by}" if rank_by != "peak" else concept_method
     if output_dir is None:
         if show_concepts:
-            output_dir = f"Pred-EQA/videos_concept_ranking/{concept_method}/{episode_id}"
+            output_dir = f"{videos_concept_root}/{concept_dir_name}/{episode_id}"
         else:
-            output_dir = f"Pred-EQA/videos/{episode_id}"
+            output_dir = f"{resolve_path('Pred-EQA/videos/baseline')}/{episode_id}"
     frames_dir = f"{output_dir}/frames"
     if os.path.exists(frames_dir):
         shutil.rmtree(frames_dir)
@@ -422,7 +488,7 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
     gt_data = load_express_bench_metadata()
     model_answers = load_model_answers(results_root)
     step_plans, chosen_actions, step_reasons, step_observations = parse_episode_plans(episode_id, results_root)
-    concept_steps = load_concept_ranking(episode_id, results_root, concept_method) if show_concepts else {}
+    concept_steps = load_concept_ranking(episode_id, results_root, concept_dir_name) if show_concepts else {}
     
     ep_info = gt_data.get(str(episode_id), {})
     question = ep_info.get("question", "Question unavailable.")
@@ -434,8 +500,8 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
     candidate_dyn_paths = [
         f"{base_dir}/dynamic_prompts.json",
         f"{results_root}/dynamic_prompts.json",
-        f"Pred-EQA/results/Pred-EQA/{episode_id}/dynamic_prompts.json",
-        f"Pred-EQA/results/Pred-EQA_3dgs_gradcam/{episode_id}/dynamic_prompts.json"
+        f"{resolve_path('Pred-EQA/results/Pred-EQA')}/{episode_id}/dynamic_prompts.json",
+        f"{resolve_path('Pred-EQA/results/Pred-EQA_3dgs_gradcam')}/{episode_id}/dynamic_prompts.json",
     ]
     for cdp in candidate_dyn_paths:
         if os.path.exists(cdp):
@@ -715,7 +781,7 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
                 if not isinstance(concepts_list, list):
                     concepts_list = []
                 concept_x = main_canvas_w
-                draw_concept_panel(draw, step, concepts_list, concept_x, concept_panel_w, canvas_h, font_title, font_text, font_small)
+                draw_concept_panel(draw, step, concepts_list, concept_x, concept_panel_w, canvas_h, font_title, font_text, font_small, rank_by=rank_by, hide_metrics=(concept_method in ["molmo_2d", "qwen_2d"]))
 
             # 6. Right-Hand Reasoning & Plan Column (if enabled)
             if show_reasoning:
@@ -745,7 +811,7 @@ def create_episode_video(episode_id="0", results_root="Pred-EQA/results/Pred-EQA
 
     # Package concept memory artifacts (ranked_concepts.json + grids) into output_dir
     if show_concepts:
-        concept_dir = f"{results_root}/{episode_id}/concept_memory/{concept_method}"
+        concept_dir = f"{results_root}/{episode_id}/concept_memory/{concept_dir_name}"
         json_src = f"{concept_dir}/ranked_concepts.json"
         if os.path.exists(json_src):
             shutil.copy2(json_src, f"{output_dir}/ranked_concepts.json")
@@ -768,6 +834,19 @@ if __name__ == "__main__":
     parser.add_argument("--show-concepts", action="store_true", default=False, help="Include Ranked Concept Memory column on the canvas")
     parser.add_argument("--no-concepts", action="store_false", dest="show_concepts", help="Disable Ranked Concept Memory column")
     parser.add_argument("--concept-method", type=str, default="3dgs_method_b", help="Concept ranking method (e.g., rgb_2d or 3dgs_method_b)")
+    parser.add_argument(
+        "--rank-by",
+        type=str,
+        choices=["peak", "sem_text", "sem_visual", "sem_text_metrics", "sem_visual_metrics"],
+        default="peak",
+        help="Concept ranking strategy",
+    )
+    parser.add_argument(
+        "--videos-concept-root",
+        type=str,
+        default="Pred-EQA/videos/concept_ranking",
+        help="Base root directory for concept ranking videos",
+    )
     parser.add_argument("--video-name", type=str, default="video.mp4", help="Filename of the generated video (default: video.mp4)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     args = parser.parse_args()
@@ -780,5 +859,7 @@ if __name__ == "__main__":
         show_reasoning=args.show_reasoning,
         show_concepts=args.show_concepts,
         video_filename=args.video_name,
-        concept_method=args.concept_method
+        concept_method=args.concept_method,
+        rank_by=args.rank_by,
+        videos_concept_root=args.videos_concept_root,
     )

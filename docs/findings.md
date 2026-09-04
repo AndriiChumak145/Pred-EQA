@@ -59,3 +59,13 @@ Each entry is dated and structured as follows:
 * **Results & Empirical Observations:** Found an active Jupyter notebook kernel (`PID 8729`, env `concept_pose`) allocating **21.2 GB VRAM** on GPU 0, leaving only ~11 GB free. Qwen3-VL-8B 8-bit requires ~16–29 GB VRAM, causing allocation failure.
 * **Why Documented:** Critical operational constraint for shared GPU environments.
 * **Key Lessons Learned:** Always verify free GPU VRAM (`nvidia-smi`) before launching `start_pred_eqa_pipeline.sh`. The Qwen server requires at least 20 GB free VRAM to load successfully.
+
+---
+
+### [2026-09-01] Frontier Lifecycle & Snapshot Coverage Across Decision Steps
+* **Objective / Hypothesis:** Understand why certain steps (e.g., Steps 11, 12, 13, 15, 16, 19 in Ep 1919) contain snapshot image files (`{step}-view_{i}.png`) but no newly generated frontier image files (`{step}_{i}.png`).
+* **Findings & Code Mechanism:**
+  * **Snapshots are Always Captured:** At every step $k$, `run_express_bench_evaluation_vlm_only.py` executes `scene.get_observation(pts, angle)` across 3–5 egocentric viewing angles ($-30^\circ$ downward camera tilt) and writes all views to `snapshot/{k}-view_{i}.png`.
+  * **Frontiers are Incrementally Saved:** In `tsdf_planner.py:update_frontier_map`, the planner checks `if frontier.image is None:` before calling `scene.get_frontier_observation`. If previously discovered frontiers are retained from step $j < k$, they reuse their existing image filename `{j}_{idx}.png`.
+  * **Implication for Downstream Pipelines:** If no new boundary voxels are explored at step $k$, no new `{k}_{i}.png` files will be saved in `frontier/`. Downstream consumers must resolve the chosen action from the execution log (`Prediction: frontier, <ID>` / `Next choice: Frontier at [<X> <Y>]`) to map the active viewpoint rather than expecting a contiguous 1-to-1 index sequence on disk.
+
